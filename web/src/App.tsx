@@ -31,6 +31,8 @@ type SnapState = {
   label: string | null
 }
 
+type SnapPoint = { time: number; label: string }
+
 type Asset = { id: string; name: string; type: string; duration: number }
 
 const DEFAULT_TRACKS: Track[] = [
@@ -267,28 +269,30 @@ function App() {
   const clampTime = (value: number) => Math.min(Math.max(value, 0), TOTAL_DURATION)
   const handleScrub = (value: number) => setPlayhead(clampTime(value))
 
-  const collectSnapPoints = (trackId: string, excludeId?: string) => {
-    const pts = new Set<number>()
-    markers.forEach(m => pts.add(m.time))
+  const collectSnapPoints = (trackId: string, excludeId?: string): SnapPoint[] => {
+    const pts: SnapPoint[] = []
+    markers.forEach(m => pts.push({ time: m.time, label: `Marker · ${m.label}` }))
     clips.filter(c => c.track === trackId && c.id !== excludeId).forEach(c => {
-      pts.add(c.start)
-      pts.add(c.start + c.duration)
+      pts.push({ time: c.start, label: `Edge · ${c.title}` })
+      pts.push({ time: c.start + c.duration, label: `Edge · ${c.title}` })
     })
-    for (let t = 0; t <= TOTAL_DURATION; t += GRID_STEP) pts.add(Number(t.toFixed(3)))
-    return Array.from(pts.values())
+    for (let t = 0; t <= TOTAL_DURATION; t += GRID_STEP) pts.push({ time: Number(t.toFixed(3)), label: 'Grid' })
+    return pts
   }
 
-  const snapTime = (candidate: number, snaps: number[]) => {
+  const snapTime = (candidate: number, snaps: SnapPoint[]) => {
     let best = candidate
+    let label: string | null = null
     let minDelta = SNAP_THRESHOLD_SEC
     for (const s of snaps) {
-      const d = Math.abs(candidate - s)
+      const d = Math.abs(candidate - s.time)
       if (d < minDelta) {
         minDelta = d
-        best = s
+        best = s.time
+        label = s.label
       }
     }
-    return best
+    return { time: best, label }
   }
 
   const addMarker = () => {
@@ -454,7 +458,8 @@ function App() {
           if (c.id !== id) return c
           if (mode === 'move') {
             let candidate = clampTime(origStart + deltaSec)
-            candidate = snapTime(candidate, snaps)
+            const snapRes = snapTime(candidate, snaps)
+            candidate = snapRes.time
             const prevSibling = siblings.filter(s => s.start + s.duration <= candidate).at(-1)
             const nextSibling = siblings.find(s => s.start >= candidate)
             if (!allowOverlap) {
@@ -470,7 +475,7 @@ function App() {
           }
           if (mode === 'trim-start') {
             const newStart = clampTime(origStart + deltaSec)
-            const snappedStart = snapTime(newStart, snaps)
+            const snappedStart = snapTime(newStart, snaps).time
             const newDur = Math.max(minDur, origDuration - (snappedStart - origStart))
             const prevSibling = siblings.filter(s => s.start + s.duration <= origStart).at(-1)
             const boundedStart = !allowOverlap && prevSibling ? Math.max(snappedStart, prevSibling.start + prevSibling.duration + 0.01) : snappedStart
@@ -483,7 +488,7 @@ function App() {
           }
           newDur = Math.min(newDur, TOTAL_DURATION - origStart)
           newDur = Math.max(minDur, newDur)
-          const snappedEnd = snapTime(origStart + newDur, snaps)
+          const snappedEnd = snapTime(origStart + newDur, snaps).time
           newDur = Math.max(minDur, snappedEnd - origStart)
           return { ...c, duration: newDur }
         })
@@ -491,14 +496,14 @@ function App() {
 
       // snap ghost
       if (mode === 'move') {
-        const p = snapTime(clampTime(origStart + deltaSec), snaps)
-        setSnap({ position: p, label: formatTime(p) })
+        const { time, label } = snapTime(clampTime(origStart + deltaSec), snaps)
+        setSnap({ position: time, label: label || formatTime(time) })
       } else if (mode === 'trim-start') {
-        const p = snapTime(clampTime(origStart + deltaSec), snaps)
-        setSnap({ position: p, label: formatTime(p) })
+        const { time, label } = snapTime(clampTime(origStart + deltaSec), snaps)
+        setSnap({ position: time, label: label || formatTime(time) })
       } else {
-        const p = snapTime(origStart + Math.max(minDur, origDuration + deltaSec), snaps)
-        setSnap({ position: p, label: formatTime(p) })
+        const { time, label } = snapTime(origStart + Math.max(minDur, origDuration + deltaSec), snaps)
+        setSnap({ position: time, label: label || formatTime(time) })
       }
     }
 
