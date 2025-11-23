@@ -12,6 +12,7 @@ type Clip = {
   url?: string
   assetType?: string
   waveform?: number[] | null
+  thumb?: string | null
 }
 
 type Marker = { time: number; label: string; color: string }
@@ -132,11 +133,44 @@ const decodeWaveform = async (file: File): Promise<number[] | null> => {
 }
 
 const loadThumb = (file: File): Promise<string | null> => new Promise(resolve => {
-  if (!file.type.startsWith('image')) return resolve(null)
-  const reader = new FileReader()
-  reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : null)
-  reader.onerror = () => resolve(null)
-  reader.readAsDataURL(file)
+  if (file.type.startsWith('image')) {
+    const reader = new FileReader()
+    reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : null)
+    reader.onerror = () => resolve(null)
+    reader.readAsDataURL(file)
+    return
+  }
+  if (file.type.startsWith('video')) {
+    const url = URL.createObjectURL(file)
+    const video = document.createElement('video')
+    video.preload = 'metadata'
+    video.src = url
+    video.muted = true
+    video.playsInline = true
+    const onError = () => { URL.revokeObjectURL(url); resolve(null) }
+    video.onerror = onError
+    video.onloadeddata = async () => {
+      try {
+        video.currentTime = Math.min(0.25, (video.duration || 1) * 0.1)
+        await video.play().catch(() => {})
+        video.pause()
+        const canvas = document.createElement('canvas')
+        canvas.width = 320
+        canvas.height = Math.max(1, Math.round((video.videoHeight / video.videoWidth) * 320))
+        const ctx = canvas.getContext('2d')
+        if (!ctx) throw new Error('no ctx')
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
+        const data = canvas.toDataURL('image/jpeg', 0.75)
+        URL.revokeObjectURL(url)
+        resolve(data)
+      } catch (_) {
+        URL.revokeObjectURL(url)
+        resolve(null)
+      }
+    }
+    return
+  }
+  resolve(null)
 })
 
 const STORAGE_KEY = 'timeline-builder-project-v1'
@@ -532,7 +566,8 @@ function App() {
         duration: asset.duration,
         url: asset.url,
         assetType: asset.type,
-        waveform: asset.waveform ?? null
+        waveform: asset.waveform ?? null,
+        thumb: asset.thumb ?? null
       }
       return { ...prev, clips: [...prev.clips, newClip] }
     })
@@ -1007,7 +1042,8 @@ function App() {
                             duration: asset.duration,
                             url: asset.url,
                             assetType: asset.type,
-                            waveform: asset.waveform ?? null
+                            waveform: asset.waveform ?? null,
+                            thumb: asset.thumb ?? null
                           }]
                         }))
                         pushCheckpoint()
@@ -1036,6 +1072,9 @@ function App() {
                             }
                           }}
                         >
+                          {clip.thumb && (
+                            <span className="clip-thumb" style={{ backgroundImage: `url(${clip.thumb})` }} />
+                          )}
                           <span>{clip.title}</span>
                           {isAudio && clip.waveform && (
                             <div className="clip-wave">

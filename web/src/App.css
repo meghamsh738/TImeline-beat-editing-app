@@ -405,9 +405,22 @@ body {
   background: linear-gradient(135deg, rgba(0, 246, 255, 0.15), rgba(0, 246, 255, 0.4));
 }
 
+.clip-thumb {
+  position: absolute;
+  left: 6px;
+  top: 4px;
+  width: 44px;
+  height: 32px;
+  border-radius: 6px;
+  background-size: cover;
+  background-position: center;
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,0.25);
+  pointer-events: none;
+}
+
 .clip-wave {
   position: absolute;
-  left: 8px;
+  left: 58px;
   right: 8px;
   bottom: 6px;
   height: 22px;
