@@ -43,6 +43,9 @@ const DEFAULT_MARKERS: Marker[] = [
 ]
 
 const TOTAL_DURATION = 18
+const GRID_STEP = 0.25
+const SNAP_THRESHOLD_SEC = 0.12
+const MIN_CLIP = 0.2
 
 const STORAGE_KEY = 'timeline-builder-project-v1'
 
@@ -104,6 +107,7 @@ function App() {
   const [activeTab, setActiveTab] = useState<'edit' | 'assets' | 'export'>('edit')
   const [playhead, setPlayhead] = useState(4.5)
   const [zoom, setZoom] = useState(1.4) // multiplier for px/sec
+  const [playing, setPlaying] = useState(false)
   const { state: project, set: setProject, undo, redo, canUndo, canRedo, pushCheckpoint } = useHistoryState<ProjectState>(
     { tracks: DEFAULT_TRACKS, clips: DEFAULT_CLIPS, markers: DEFAULT_MARKERS }
   )
@@ -111,6 +115,8 @@ function App() {
   const [selectedClip, setSelectedClip] = useState<string | null>(null)
 
   const timelineRef = useRef<HTMLDivElement | null>(null)
+  const [viewWindow, setViewWindow] = useState({ start: 0, duration: 8 })
+  const rafRef = useRef<number | null>(null)
 
   type DragInfo = {
     id: string
@@ -145,7 +151,35 @@ function App() {
     localStorage.setItem(STORAGE_KEY, payload)
   }, [project])
 
-  // Keyboard nudging for selected clip
+  // playback loop
+  useEffect(() => {
+    if (!playing) {
+      if (rafRef.current) cancelAnimationFrame(rafRef.current)
+      rafRef.current = null
+      return
+    }
+    let lastTs: number | null = null
+    const tick = (ts: number) => {
+      if (lastTs === null) lastTs = ts
+      const delta = (ts - lastTs) / 1000
+      lastTs = ts
+      setPlayhead(prev => {
+        const next = clampTime(prev + delta)
+        if (next >= TOTAL_DURATION) {
+          setPlaying(false)
+          return TOTAL_DURATION
+        }
+        return next
+      })
+      rafRef.current = requestAnimationFrame(tick)
+    }
+    rafRef.current = requestAnimationFrame(tick)
+    return () => {
+      if (rafRef.current) cancelAnimationFrame(rafRef.current)
+    }
+  }, [playing])
+
+  // Keyboard nudging for selected clip + undo/redo
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!selectedClip) return
@@ -158,6 +192,10 @@ function App() {
             : c)
         }), { push: false })
         pushCheckpoint()
+      }
+      if (e.code === 'Space') {
+        e.preventDefault()
+        setPlaying(p => !p)
       }
       if (e.metaKey || e.ctrlKey) {
         if (e.key.toLowerCase() === 'z' && !e.shiftKey) undo()
@@ -180,6 +218,30 @@ function App() {
 
   const clampTime = (value: number) => Math.min(Math.max(value, 0), TOTAL_DURATION)
   const handleScrub = (value: number) => setPlayhead(clampTime(value))
+
+  const collectSnapPoints = (trackId: string, excludeId?: string) => {
+    const pts = new Set<number>()
+    markers.forEach(m => pts.add(m.time))
+    clips.filter(c => c.track === trackId && c.id !== excludeId).forEach(c => {
+      pts.add(c.start)
+      pts.add(c.start + c.duration)
+    })
+    for (let t = 0; t <= TOTAL_DURATION; t += GRID_STEP) pts.add(Number(t.toFixed(3)))
+    return Array.from(pts.values())
+  }
+
+  const snapTime = (candidate: number, snaps: number[]) => {
+    let best = candidate
+    let minDelta = SNAP_THRESHOLD_SEC
+    for (const s of snaps) {
+      const d = Math.abs(candidate - s)
+      if (d < minDelta) {
+        minDelta = d
+        best = s
+      }
+    }
+    return best
+  }
 
   const addMarker = () => {
     const palette = ['#22d3ee', '#f97316', '#e11d48', '#a78bfa', '#22c55e']
@@ -218,6 +280,20 @@ function App() {
     }).catch(err => console.error('Import failed', err))
   }
 
+  // track scroll -> minimap view window
+  useEffect(() => {
+    const scroller = timelineRef.current?.parentElement
+    if (!scroller) return
+    const onScroll = () => {
+      const start = (scroller.scrollLeft || 0) / pxPerSec
+      const duration = (scroller.clientWidth || 1) / pxPerSec
+      setViewWindow({ start: clampTime(start), duration: Math.min(TOTAL_DURATION, duration) })
+    }
+    onScroll()
+    scroller.addEventListener('scroll', onScroll)
+    return () => scroller.removeEventListener('scroll', onScroll)
+  }, [pxPerSec])
+
   const startDrag = (e: React.MouseEvent<HTMLDivElement>, clip: Clip) => {
     const rect = e.currentTarget.getBoundingClientRect()
     const offsetX = e.clientX - rect.left
@@ -242,20 +318,49 @@ function App() {
       if (!dragRef.current) return
       const { id, mode, startX, origStart, origDuration } = dragRef.current
       const deltaSec = (e.clientX - startX) / pxPerSec
-      const minDur = 0.2
+      const current = project.clips.find(c => c.id === id)
+      if (!current) return
+      const trackId = current.track
+      const snaps = collectSnapPoints(trackId, id)
+      const siblings = project.clips
+        .filter(c => c.track === trackId && c.id !== id)
+        .sort((a, b) => a.start - b.start)
+      const minDur = MIN_CLIP
       setProject(prev => ({
         ...prev,
         clips: prev.clips.map(c => {
           if (c.id !== id) return c
           if (mode === 'move') {
-            return { ...c, start: clampTime(origStart + deltaSec) }
+            let candidate = clampTime(origStart + deltaSec)
+            candidate = snapTime(candidate, snaps)
+            const prevSibling = siblings.filter(s => s.start + s.duration <= candidate).at(-1)
+            const nextSibling = siblings.find(s => s.start >= candidate)
+            if (prevSibling && candidate < prevSibling.start + prevSibling.duration) {
+              candidate = prevSibling.start + prevSibling.duration + 0.01
+            }
+            if (nextSibling && candidate + c.duration > nextSibling.start) {
+              candidate = Math.max(0, nextSibling.start - c.duration - 0.01)
+            }
+            candidate = clampTime(candidate)
+            return { ...c, start: candidate }
           }
           if (mode === 'trim-start') {
             const newStart = clampTime(origStart + deltaSec)
-            const newDur = Math.max(minDur, origDuration - (newStart - origStart))
-            return { ...c, start: newStart, duration: newDur }
+            const snappedStart = snapTime(newStart, snaps)
+            const newDur = Math.max(minDur, origDuration - (snappedStart - origStart))
+            const prevSibling = siblings.filter(s => s.start + s.duration <= origStart).at(-1)
+            const boundedStart = prevSibling ? Math.max(snappedStart, prevSibling.start + prevSibling.duration + 0.01) : snappedStart
+            return { ...c, start: clampTime(boundedStart), duration: Math.max(minDur, newDur) }
           }
-          const newDur = Math.max(minDur, origDuration + deltaSec)
+          let newDur = Math.max(minDur, origDuration + deltaSec)
+          const nextSibling = siblings.find(s => s.start >= origStart)
+          if (nextSibling) {
+            newDur = Math.min(newDur, nextSibling.start - origStart - 0.01)
+          }
+          newDur = Math.min(newDur, TOTAL_DURATION - origStart)
+          newDur = Math.max(minDur, newDur)
+          const snappedEnd = snapTime(origStart + newDur, snaps)
+          newDur = Math.max(minDur, snappedEnd - origStart)
           return { ...c, duration: newDur }
         })
       }), { push: false })
@@ -274,7 +379,7 @@ function App() {
       window.removeEventListener('mousemove', onMove)
       window.removeEventListener('mouseup', onUp)
     }
-  }, [pxPerSec, setProject, pushCheckpoint])
+  }, [pxPerSec, setProject, pushCheckpoint, project.clips])
 
   return (
     <div className="app">
@@ -294,9 +399,9 @@ function App() {
           </label>
           <div className="pill">Timecode {formatTime(playhead)}</div>
           <div className="transport">
-            <button>⏮</button>
-            <button>▶</button>
-            <button>⏭</button>
+            <button onClick={() => setPlayhead(0)}>⏮</button>
+            <button onClick={() => setPlaying(p => !p)}>{playing ? '⏸' : '▶'}</button>
+            <button onClick={() => setPlayhead(TOTAL_DURATION)}>⏭</button>
           </div>
           <div className="pill">
             <button disabled={!canUndo} onClick={undo}>⌘Z Undo</button>
@@ -398,6 +503,35 @@ function App() {
                     </div>
                   </div>
                 ))}
+              </div>
+              <div className="minimap" onClick={(e) => {
+                const rect = e.currentTarget.getBoundingClientRect()
+                const ratio = (e.clientX - rect.left) / rect.width
+                const target = clampTime(ratio * TOTAL_DURATION)
+                setPlayhead(target)
+                if (timelineRef.current) {
+                  const viewport = timelineRef.current.parentElement?.clientWidth || 0
+                  const scrollTarget = Math.max(0, target * pxPerSec - viewport / 2)
+                  timelineRef.current.parentElement?.scrollTo({ left: scrollTarget, behavior: 'smooth' })
+                }
+              }}>
+                <div className="minimap-track">
+                  {clips.map(c => (
+                    <div
+                      key={c.id}
+                      className="mini-clip"
+                      style={{ left: `${(c.start / TOTAL_DURATION) * 100}%`, width: `${(c.duration / TOTAL_DURATION) * 100}%`, background: c.color }}
+                    />
+                  ))}
+                  <div
+                    className="mini-view"
+                    style={{
+                      left: `${(viewWindow.start / TOTAL_DURATION) * 100}%`,
+                      width: `${(viewWindow.duration / TOTAL_DURATION) * 100}%`
+                    }}
+                  />
+                  <div className="mini-playhead" style={{ left: `${(playhead / TOTAL_DURATION) * 100}%` }} />
+                </div>
               </div>
             </div>
           </section>

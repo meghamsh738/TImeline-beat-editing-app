@@ -79,6 +79,8 @@ body {
   margin-left: 6px;
 }
 
+.transport button:disabled { opacity: 0.4; cursor: not-allowed; }
+
 .tabs {
   display: inline-flex;
   background: rgba(255, 255, 255, 0.05);
@@ -316,6 +318,48 @@ body {
 
 .clip::before { left: 0; cursor: w-resize; }
 .clip::after { right: 0; cursor: e-resize; }
+
+.minimap {
+  margin-top: 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  padding: 8px;
+  cursor: pointer;
+}
+
+.minimap-track {
+  position: relative;
+  height: 30px;
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.mini-clip {
+  position: absolute;
+  top: 8px;
+  height: 14px;
+  border-radius: 6px;
+  opacity: 0.9;
+}
+
+.mini-view {
+  position: absolute;
+  top: 2px;
+  height: 26px;
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.mini-playhead {
+  position: absolute;
+  top: 0;
+  width: 2px;
+  height: 30px;
+  background: #f43f5e;
+}
 
 .placeholder {
   padding: 24px;
