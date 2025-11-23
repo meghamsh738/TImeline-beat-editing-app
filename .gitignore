@@ -6,3 +6,5 @@ __pycache__/
 .glow_cache/
 glow_tmp/
 assets/
+web/node_modules/
+web/dist/
