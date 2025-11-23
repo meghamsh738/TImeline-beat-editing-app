@@ -594,7 +594,9 @@ function App() {
         url: asset.url,
         assetType: asset.type,
         waveform: asset.waveform ?? null,
-        thumb: asset.thumb ?? null
+        thumb: asset.thumb ?? null,
+        mediaDuration: asset.duration,
+        mediaOffset: 0
       }
       return { ...prev, clips: [...prev.clips, newClip] }
     })
@@ -769,9 +771,11 @@ function App() {
           }
           if (mode === 'slip') {
             // Move media in/out without changing clip position/duration
-            const slipAmount = deltaSec
-            const newStart = clampTime(origStart)
-            return { ...c, start: newStart, duration: origDuration } // visual stays; media offset not yet modeled
+            const mediaDur = c.mediaDuration ?? origDuration
+            const maxOffset = Math.max(0, mediaDur - origDuration)
+            const nextOffset = clampTime((c.mediaOffset ?? 0) + deltaSec)
+            const boundedOffset = Math.min(Math.max(nextOffset, 0), maxOffset)
+            return { ...c, mediaOffset: boundedOffset, start: origStart, duration: origDuration }
           }
           if (mode === 'slide') {
             // Slide keeps length, moves clip while pushing/pulling neighbors on same track
@@ -1169,7 +1173,9 @@ function App() {
                             url: asset.url,
                             assetType: asset.type,
                             waveform: asset.waveform ?? null,
-                            thumb: asset.thumb ?? null
+                            thumb: asset.thumb ?? null,
+                            mediaDuration: asset.duration,
+                            mediaOffset: 0
                           }]
                         }))
                         pushCheckpoint()
