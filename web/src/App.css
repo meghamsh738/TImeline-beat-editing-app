@@ -172,6 +172,27 @@ body {
   accent-color: #06b6d4;
 }
 
+.export-box {
+  text-align: left;
+}
+
+.export-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.ghost {
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.05);
+  color: #e8ecf5;
+  border-radius: 10px;
+  padding: 10px 14px;
+  cursor: pointer;
+  font-weight: 700;
+}
+
 .timeline-wrapper {
   position: relative;
   overflow: auto;
