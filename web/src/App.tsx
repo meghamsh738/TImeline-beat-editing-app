@@ -26,6 +26,10 @@ type SelectionState = {
   marquee: { x1: number; x2: number; y1: number; y2: number } | null
 }
 
+type SnapState = {
+  position: number | null
+}
+
 const DEFAULT_TRACKS: Track[] = [
   { id: 'v1', name: 'V1 · Motion', type: 'video' },
   { id: 'v2', name: 'V2 · Titles', type: 'video' },
@@ -121,6 +125,7 @@ function App() {
   )
   const { tracks, clips, markers } = project
   const [selection, setSelection] = useState<SelectionState>({ clipIds: [], marquee: null })
+  const [snap, setSnap] = useState<SnapState>({ position: null })
 
   const timelineRef = useRef<HTMLDivElement | null>(null)
   const [viewWindow, setViewWindow] = useState({ start: 0, duration: 8 })
@@ -341,6 +346,7 @@ function App() {
       origStart: clip.start,
       origDuration: clip.duration
     }
+    setSnap({ position: clip.start })
     dragStartedState.current = project
     if (e.metaKey || e.ctrlKey || e.shiftKey) {
       setSelection((prev) => {
@@ -440,6 +446,11 @@ function App() {
           return { ...c, duration: newDur }
         })
       }), { push: false })
+
+      // snap ghost
+      if (mode === 'move') setSnap({ position: snapTime(clampTime(origStart + deltaSec), snaps) })
+      else if (mode === 'trim-start') setSnap({ position: snapTime(clampTime(origStart + deltaSec), snaps) })
+      else setSnap({ position: snapTime(origStart + Math.max(minDur, origDuration + deltaSec), snaps) })
     }
 
     const onUp = () => {
@@ -450,6 +461,7 @@ function App() {
       if (selection.marquee) {
         setSelection(prev => ({ ...prev, marquee: null }))
       }
+      setSnap({ position: null })
     }
 
     window.addEventListener('mousemove', onMove)
@@ -592,6 +604,9 @@ function App() {
                       height: Math.abs(selection.marquee.y2 - selection.marquee.y1)
                     }}
                   />
+                )}
+                {snap.position !== null && (
+                  <div className="snap-ghost" style={{ left: snap.position * pxPerSec }} />
                 )}
                 {tracks.map((track, tIndex) => (
                   <div key={track.id} className="track-row">
