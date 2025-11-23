@@ -18,6 +18,7 @@ type Clip = {
 type Marker = { time: number; label: string; color: string }
 
 type Track = { id: string; name: string; type: 'video' | 'audio' }
+type TrackState = Track & { mute?: boolean; solo?: boolean; locked?: boolean; height?: 'normal' | 'compact' }
 
 type ProjectState = {
   tracks: Track[]
@@ -49,11 +50,11 @@ type Asset = {
   thumb?: string
 }
 
-const DEFAULT_TRACKS: Track[] = [
-  { id: 'v1', name: 'V1 · Motion', type: 'video' },
-  { id: 'v2', name: 'V2 · Titles', type: 'video' },
-  { id: 'a1', name: 'A1 · Music', type: 'audio' },
-  { id: 'a2', name: 'A2 · Foley', type: 'audio' }
+const DEFAULT_TRACKS: TrackState[] = [
+  { id: 'v1', name: 'V1 · Motion', type: 'video', height: 'normal' },
+  { id: 'v2', name: 'V2 · Titles', type: 'video', height: 'normal' },
+  { id: 'a1', name: 'A1 · Music', type: 'audio', height: 'normal' },
+  { id: 'a2', name: 'A2 · Foley', type: 'audio', height: 'normal' }
 ]
 
 const DEFAULT_CLIPS: Clip[] = [
@@ -262,6 +263,9 @@ function App() {
   const rafRef = useRef<number | null>(null)
   const minimapRef = useRef<HTMLDivElement | null>(null)
 
+  const trackIndex = useMemo(() => Object.fromEntries(tracks.map(t => [t.id, t])), [tracks])
+  const anySolo = useMemo(() => tracks.some(t => t.solo), [tracks])
+
   type DragInfo = {
     id: string
     mode: 'move' | 'trim-start' | 'trim-end'
@@ -407,7 +411,14 @@ function App() {
     playheadStartRef.current = playhead
     playStartTimeRef.current = ctx.currentTime
     const startAt = ctx.currentTime + 0.05
-    const audioClips = clips.filter(c => (c.assetType || '').startsWith('audio'))
+    const audioClips = clips.filter(c => {
+      if (!(c.assetType || '').startsWith('audio')) return false
+      const tr = trackIndex[c.track]
+      if (!tr) return false
+      if (tr.locked) return false
+      if (anySolo) return tr.solo === true
+      return !tr.mute
+    })
     const resolved = await Promise.all(audioClips.map(async clip => {
       const buf = await fetchBuffer(ctx, clip.url)
       if (!buf) return null
@@ -452,7 +463,14 @@ function App() {
   const syncVideoToPlayhead = (pos: number) => {
     const vid = videoRef.current
     if (!vid) return
-    const active = clips.find(c => (c.assetType || '').startsWith('video') && c.url && pos >= c.start && pos <= c.start + c.duration)
+    const active = clips.find(c => {
+      if (!(c.assetType || '').startsWith('video')) return false
+      const tr = trackIndex[c.track]
+      if (!tr || tr.locked) return false
+      if (anySolo && !tr.solo) return false
+      if (!anySolo && tr.mute) return false
+      return c.url && pos >= c.start && pos <= c.start + c.duration
+    })
     if (!active) {
       vid.pause()
       activeVideoIdRef.current = null
@@ -1012,16 +1030,48 @@ function App() {
                     <div className="track-label">
                       <span className="badge">{track.type === 'video' ? 'V' : 'A'}</span>
                       {track.name}
+                      <div className="track-buttons">
+                        <button
+                          className={`ghost tiny ${track.mute ? 'active' : ''}`}
+                          onClick={() => setProject(prev => ({
+                            ...prev,
+                            tracks: prev.tracks.map(t => t.id === track.id ? { ...t, mute: !t.mute, solo: t.solo && t.mute ? false : t.solo } : t)
+                          }))}
+                        >M</button>
+                        <button
+                          className={`ghost tiny ${track.solo ? 'active' : ''}`}
+                          onClick={() => setProject(prev => ({
+                            ...prev,
+                            tracks: prev.tracks.map(t => t.id === track.id ? { ...t, solo: !t.solo, mute: t.mute && !t.solo ? false : t.mute } : t)
+                          }))}
+                        >S</button>
+                        <button
+                          className={`ghost tiny ${track.locked ? 'active' : ''}`}
+                          onClick={() => setProject(prev => ({
+                            ...prev,
+                            tracks: prev.tracks.map(t => t.id === track.id ? { ...t, locked: !t.locked } : t)
+                          }))}
+                        >🔒</button>
+                        <button
+                          className="ghost tiny"
+                          onClick={() => setProject(prev => ({
+                            ...prev,
+                            tracks: prev.tracks.map(t => t.id === track.id ? { ...t, height: t.height === 'compact' ? 'normal' : 'compact' } : t)
+                          }))}
+                        >↕</button>
+                      </div>
                     </div>
                     <div
-                      className="track-lane"
+                      className={`track-lane ${track.height === 'compact' ? 'compact' : ''} ${track.locked ? 'locked' : ''}`}
                       data-track-index={tIndex}
                       onDragOver={(e) => {
+                        if (track.locked) return
                         if (e.dataTransfer.types.includes('text/asset-id')) {
                           e.preventDefault()
                         }
                       }}
                       onDrop={(e) => {
+                        if (track.locked) return
                         e.preventDefault()
                         const assetId = e.dataTransfer.getData('text/asset-id')
                         if (!assetId) return
@@ -1051,6 +1101,30 @@ function App() {
                     >
                       {clips.filter(c => c.track === track.id).map((clip) => {
                         const isAudio = (clip.assetType || '').startsWith('audio') || track.type === 'audio'
+                        if (track.locked) return (
+                          <div
+                            key={clip.id}
+                            className={`clip locked ${selection.clipIds.includes(clip.id) ? 'selected' : ''} ${isAudio ? 'audio' : ''}`}
+                            style={{
+                              left: clip.start * pxPerSec,
+                              width: clip.duration * pxPerSec,
+                              background: clip.color
+                            }}
+                            title={`${clip.title} (${formatTime(clip.start)} - ${formatTime(clip.start + clip.duration)})`}
+                          >
+                            {clip.thumb && (
+                              <span className="clip-thumb" style={{ backgroundImage: `url(${clip.thumb})` }} />
+                            )}
+                            <span>{clip.title}</span>
+                            {isAudio && clip.waveform && (
+                              <div className="clip-wave">
+                                {clip.waveform.map((v, idx) => (
+                                  <span key={idx} style={{ height: `${Math.max(6, v * 28)}px` }} />
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )
                         return (
                         <div
                           key={clip.id}
