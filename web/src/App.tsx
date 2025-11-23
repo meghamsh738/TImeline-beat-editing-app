@@ -31,6 +31,8 @@ type SnapState = {
   label: string | null
 }
 
+type DragHandle = null | 'loop-start' | 'loop-end'
+
 type SnapPoint = { time: number; label: string }
 
 type Asset = { id: string; name: string; type: string; duration: number }
@@ -134,10 +136,12 @@ function App() {
   const { tracks, clips, markers } = project
   const [selection, setSelection] = useState<SelectionState>({ clipIds: [], marquee: null })
   const [snap, setSnap] = useState<SnapState>({ position: null, label: null })
+  const loopHandleRef = useRef<DragHandle>(null)
 
   const timelineRef = useRef<HTMLDivElement | null>(null)
   const [viewWindow, setViewWindow] = useState({ start: 0, duration: 8 })
   const rafRef = useRef<number | null>(null)
+  const minimapRef = useRef<HTMLDivElement | null>(null)
 
   type DragInfo = {
     id: string
@@ -309,6 +313,10 @@ function App() {
     setPlayhead(clampTime(seconds))
   }
 
+  const jumpToMarker = (m: Marker) => {
+    setPlayhead(clampTime(m.time))
+  }
+
   const handleAssetUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || [])
     if (!files.length) return
@@ -413,8 +421,28 @@ function App() {
     setSelection({ clipIds: [], marquee: { x1: x, x2: x, y1: y, y2: y } })
   }
 
+  const startLoopHandle = (handle: DragHandle) => (e: React.MouseEvent<HTMLDivElement>) => {
+    e.stopPropagation()
+    loopHandleRef.current = handle
+  }
+
   useEffect(() => {
     const onMove = (e: MouseEvent) => {
+      if (loopHandleRef.current && minimapRef.current) {
+        const rect = minimapRef.current.getBoundingClientRect()
+        const ratio = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width))
+        const time = clampTime(ratio * TOTAL_DURATION)
+        setLoopRange(range => {
+          if (loopHandleRef.current === 'loop-start') {
+            const start = Math.min(time, range.end - 0.2)
+            return { ...range, start }
+          }
+          const end = Math.max(time, range.start + 0.2)
+          return { ...range, end }
+        })
+        return
+      }
+
       // marquee drag
       if (selection.marquee) {
         const container = timelineRef.current
@@ -516,6 +544,7 @@ function App() {
         setSelection(prev => ({ ...prev, marquee: null }))
       }
       setSnap({ position: null, label: null })
+      loopHandleRef.current = null
     }
 
     window.addEventListener('mousemove', onMove)
@@ -607,7 +636,7 @@ function App() {
             <div className="panel-head">Markers</div>
             <ul className="marker-list">
               {markers.map((m) => (
-                <li key={m.label} style={{ borderLeftColor: m.color }}>
+                <li key={m.label} style={{ borderLeftColor: m.color }} onClick={() => jumpToMarker(m)}>
                   <span>{formatTime(m.time)}</span>
                   <strong>{m.label}</strong>
                 </li>
@@ -707,7 +736,7 @@ function App() {
                   const scrollTarget = Math.max(0, target * pxPerSec - viewport / 2)
                   timelineRef.current.parentElement?.scrollTo({ left: scrollTarget, behavior: 'smooth' })
                 }
-              }}>
+              }} ref={minimapRef}>
                 <div className="minimap-track">
                   {clips.map(c => (
                     <div
@@ -716,6 +745,16 @@ function App() {
                       style={{ left: `${(c.start / TOTAL_DURATION) * 100}%`, width: `${(c.duration / TOTAL_DURATION) * 100}%`, background: c.color }}
                     />
                   ))}
+                  <div
+                    className="loop-handle start"
+                    style={{ left: `${(loopRange.start / TOTAL_DURATION) * 100}%` }}
+                    onMouseDown={startLoopHandle('loop-start')}
+                  />
+                  <div
+                    className="loop-handle end"
+                    style={{ left: `${(loopRange.end / TOTAL_DURATION) * 100}%` }}
+                    onMouseDown={startLoopHandle('loop-end')}
+                  />
                   <div
                     className="mini-view"
                     style={{

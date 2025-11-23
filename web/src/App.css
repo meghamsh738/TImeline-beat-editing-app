@@ -392,6 +392,19 @@ body {
   background: #f43f5e;
 }
 
+.loop-handle {
+  position: absolute;
+  top: 0;
+  width: 6px;
+  height: 30px;
+  background: #22d3ee;
+  border-radius: 2px;
+  cursor: ew-resize;
+  box-shadow: 0 0 0 4px rgba(34, 211, 238, 0.18);
+}
+
+.loop-handle.end { background: #fbbf24; box-shadow: 0 0 0 4px rgba(251, 191, 36, 0.18); }
+
 .snap-ghost::after {
   content: attr(data-label);
   position: absolute;
