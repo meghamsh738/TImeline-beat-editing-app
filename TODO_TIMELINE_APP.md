@@ -17,7 +17,7 @@
   - [>] Track-aware playback: mute/solo/lock respected for audio/video; still needs multi-stream decode.
 
 ## Timeline operations
-- [ ] Trim modes (ripple/roll/slip/slide) with proper gap handling.
+- [>] Trim modes: ripple/roll done; slip/slide (alt+trim handles) added; still need edge-case gap logic & UI affordances.
 - [>] Clip controls: per-track mute/solo/lock landed; linking/grouping/disable still pending.
 - [ ] Nested sequences/subclips.
 - [ ] Snapping refinements: edges/markers/gaps with configurable strength.
