@@ -142,6 +142,19 @@ body {
   font-size: 13px;
 }
 
+.asset-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
+}
+
+.asset-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
 .asset-list li:last-child,
 .marker-list li:last-child { border-bottom: none; }
 
@@ -377,6 +390,20 @@ body {
   width: 2px;
   height: 30px;
   background: #f43f5e;
+}
+
+.snap-ghost::after {
+  content: attr(data-label);
+  position: absolute;
+  top: 8px;
+  left: 6px;
+  padding: 2px 6px;
+  background: rgba(34, 211, 238, 0.14);
+  border: 1px solid rgba(34, 211, 238, 0.5);
+  color: #c7f9ff;
+  font-size: 11px;
+  border-radius: 6px;
+  white-space: nowrap;
 }
 
 .placeholder {

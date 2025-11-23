@@ -28,7 +28,10 @@ type SelectionState = {
 
 type SnapState = {
   position: number | null
+  label: string | null
 }
+
+type Asset = { id: string; name: string; type: string; duration: number }
 
 const DEFAULT_TRACKS: Track[] = [
   { id: 'v1', name: 'V1 · Motion', type: 'video' },
@@ -50,6 +53,8 @@ const DEFAULT_MARKERS: Marker[] = [
   { time: 8.5, label: 'Cut to B-roll', color: '#f97316' },
   { time: 12, label: 'Logo hit', color: '#e11d48' }
 ]
+
+const CLIP_COLORS = ['#4ade80', '#60a5fa', '#f472b6', '#fbbf24', '#a78bfa', '#22d3ee']
 
 const TOTAL_DURATION = 18
 const GRID_STEP = 0.25
@@ -120,12 +125,13 @@ function App() {
   const [allowOverlap, setAllowOverlap] = useState(false)
   const [loopEnabled, setLoopEnabled] = useState(false)
   const [loopRange, setLoopRange] = useState<{ start: number; end: number }>({ start: 0, end: 8 })
+  const [assets, setAssets] = useState<Asset[]>([])
   const { state: project, set: setProject, undo, redo, canUndo, canRedo, pushCheckpoint } = useHistoryState<ProjectState>(
     { tracks: DEFAULT_TRACKS, clips: DEFAULT_CLIPS, markers: DEFAULT_MARKERS }
   )
   const { tracks, clips, markers } = project
   const [selection, setSelection] = useState<SelectionState>({ clipIds: [], marquee: null })
-  const [snap, setSnap] = useState<SnapState>({ position: null })
+  const [snap, setSnap] = useState<SnapState>({ position: null, label: null })
 
   const timelineRef = useRef<HTMLDivElement | null>(null)
   const [viewWindow, setViewWindow] = useState({ start: 0, duration: 8 })
@@ -177,12 +183,17 @@ function App() {
       const delta = (ts - lastTs) / 1000
       lastTs = ts
       setPlayhead(prev => {
-        const next = clampTime(prev + delta)
-        if (next >= TOTAL_DURATION) {
+        let next = prev + delta
+        if (loopEnabled) {
+          const { start, end } = loopRange
+          if (next >= end) {
+            next = start + ((next - start) % (end - start))
+          }
+        } else if (next >= TOTAL_DURATION) {
           setPlaying(false)
           return TOTAL_DURATION
         }
-        return next
+        return clampTime(next)
       })
       rafRef.current = requestAnimationFrame(tick)
     }
@@ -294,6 +305,37 @@ function App() {
     setPlayhead(clampTime(seconds))
   }
 
+  const handleAssetUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || [])
+    if (!files.length) return
+    const next = files.map((f, idx) => ({
+      id: `${Date.now()}-${idx}-${f.name}`,
+      name: f.name,
+      type: f.type || 'unknown',
+      duration: Math.max(3, Math.min(20, f.size / 1_000_000)) // naive duration guess
+    }))
+    setAssets(prev => [...prev, ...next])
+    e.target.value = ''
+  }
+
+  const placeAssetOnTrack = (asset: Asset, trackId: string) => {
+    setProject(prev => {
+      const trackClips = prev.clips.filter(c => c.track === trackId)
+      const end = trackClips.length ? Math.max(...trackClips.map(c => c.start + c.duration)) : 0
+      const color = CLIP_COLORS[(prev.clips.length) % CLIP_COLORS.length]
+      const newClip: Clip = {
+        id: `${asset.id}-clip`,
+        title: asset.name,
+        track: trackId,
+        color,
+        start: end + 0.1,
+        duration: asset.duration
+      }
+      return { ...prev, clips: [...prev.clips, newClip] }
+    })
+    pushCheckpoint()
+  }
+
   const exportJson = () => {
     const blob = new Blob([JSON.stringify({ tracks, clips, markers }, null, 2)], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
@@ -346,7 +388,7 @@ function App() {
       origStart: clip.start,
       origDuration: clip.duration
     }
-    setSnap({ position: clip.start })
+    setSnap({ position: clip.start, label: formatTime(clip.start) })
     dragStartedState.current = project
     if (e.metaKey || e.ctrlKey || e.shiftKey) {
       setSelection((prev) => {
@@ -448,9 +490,16 @@ function App() {
       }), { push: false })
 
       // snap ghost
-      if (mode === 'move') setSnap({ position: snapTime(clampTime(origStart + deltaSec), snaps) })
-      else if (mode === 'trim-start') setSnap({ position: snapTime(clampTime(origStart + deltaSec), snaps) })
-      else setSnap({ position: snapTime(origStart + Math.max(minDur, origDuration + deltaSec), snaps) })
+      if (mode === 'move') {
+        const p = snapTime(clampTime(origStart + deltaSec), snaps)
+        setSnap({ position: p, label: formatTime(p) })
+      } else if (mode === 'trim-start') {
+        const p = snapTime(clampTime(origStart + deltaSec), snaps)
+        setSnap({ position: p, label: formatTime(p) })
+      } else {
+        const p = snapTime(origStart + Math.max(minDur, origDuration + deltaSec), snaps)
+        setSnap({ position: p, label: formatTime(p) })
+      }
     }
 
     const onUp = () => {
@@ -461,7 +510,7 @@ function App() {
       if (selection.marquee) {
         setSelection(prev => ({ ...prev, marquee: null }))
       }
-      setSnap({ position: null })
+      setSnap({ position: null, label: null })
     }
 
     window.addEventListener('mousemove', onMove)
@@ -606,7 +655,7 @@ function App() {
                   />
                 )}
                 {snap.position !== null && (
-                  <div className="snap-ghost" style={{ left: snap.position * pxPerSec }} />
+                  <div className="snap-ghost" style={{ left: snap.position * pxPerSec }} data-label={snap.label || ''} />
                 )}
                 {tracks.map((track, tIndex) => (
                   <div key={track.id} className="track-row">
@@ -679,8 +728,28 @@ function App() {
 
       {activeTab === 'assets' && (
         <div className="placeholder">
-          <p>Asset bin will live here (imports, waveform/thumb extraction).</p>
-          <p>Planned: drag to timeline, search, filter by type.</p>
+          <p><strong>Asset bin</strong></p>
+          <label className="ghost">
+            Import files
+            <input type="file" multiple hidden onChange={handleAssetUpload} />
+          </label>
+          <ul className="asset-list">
+            {assets.length === 0 && <li>No assets yet</li>}
+            {assets.map(a => (
+              <li key={a.id} className="asset-row">
+                <div>
+                  <strong>{a.name}</strong>
+                  <div className="muted small">{a.type || 'file'} · ~{a.duration.toFixed(1)}s</div>
+                </div>
+                <div className="asset-actions">
+                  {tracks.map(t => (
+                    <button key={t.id} className="ghost" onClick={() => placeAssetOnTrack(a, t.id)}>Send to {t.name}</button>
+                  ))}
+                </div>
+              </li>
+            ))}
+          </ul>
+          <p>Planned: waveform/thumb extraction + drag-to-track.</p>
         </div>
       )}
       {activeTab === 'export' && (
