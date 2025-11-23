@@ -24,5 +24,13 @@ Bundled free assets live in `web/public/samples/`. New truly-free examples:
 - `mars-1280.jpg` – NASA/ESA Mars true-color image (public domain)
 Legacy samples from Samplelib (mp4 / short wav / photo) remain for convenience. Use the Assets tab file picker or drag directly onto tracks.
 
+Current feature set
+- Audio + video playback synced to playhead; track-aware mute/solo/lock; loop ranges.
+- Timeline trims: ripple, roll, slip, slide (alt+trim handles); snapping to markers/edges.
+- Clip visuals: audio waveforms on clips; video thumbnails captured on import; per-track compact height toggle.
+- Video preview panel synced to active video clip; audio playback via Web Audio.
+- Asset ingest with waveform/thumb extraction; drag/drop or “Send to track”.
+- Mock export presets (JSON/MP4/WebM placeholder) with Playwright smoke that records screenshots + video.
+
 More details
 See `web/README.md` for feature notes, shortcuts, and file map.

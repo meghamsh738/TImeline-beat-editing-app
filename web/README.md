@@ -24,6 +24,14 @@ Free-to-use files are bundled in `public/samples/`:
 - Legacy Samplelib files: `sample-5s.mp4`, `sample-3s.wav`, `sample-photo.jpg` (test/demo friendly)
 Use the **Assets** tab file picker or drag these into the timeline tracks.
 
+## Feature snapshot
+- Playback: audio + video synced to playhead; loop ranges; track mute/solo/lock respected.
+- Trims: ripple, roll, slip, slide (Alt+trim handles); snapping to markers/edges/gaps.
+- Visuals: audio waveforms on clips; video thumbnails captured on import; per-track compact height toggle.
+- Preview: left-panel video monitor follows active video clip; audio via Web Audio.
+- Asset ingest: waveform and thumb extraction; drag/drop to tracks or “Send to track”.
+- Export: mock presets (JSON/MP4/WebM) plus Playwright smoke that records screenshots + a run video.
+
 ## Features exercised in the UI
 - Tracks with draggable clips, trim handles, marquee multi-select, undo/redo.
 - Snap refinement: grid/marker/gap/edge targets with a labeled snap ghost.
