@@ -13,6 +13,8 @@ type Clip = {
   assetType?: string
   waveform?: number[] | null
   thumb?: string | null
+  mediaDuration?: number
+  mediaOffset?: number
 }
 
 type Marker = { time: number; label: string; color: string }
@@ -253,6 +255,7 @@ function App() {
 
   const audioCtxRef = useRef<AudioContext | null>(null)
   const bufferCacheRef = useRef<Map<string, AudioBuffer>>(new Map())
+  const bufferDurRef = useRef<Map<string, number>>(new Map())
   const sourcesRef = useRef<AudioBufferSourceNode[]>([])
   const playheadStartRef = useRef<number>(0)
   const playStartTimeRef = useRef<number>(0)
@@ -403,6 +406,7 @@ function App() {
     const arr = await res.arrayBuffer()
     const buf = await ctx.decodeAudioData(arr)
     cache.set(url, buf)
+    bufferDurRef.current.set(url, buf.duration)
     return buf
   }
 
@@ -423,8 +427,10 @@ function App() {
     const resolved = await Promise.all(audioClips.map(async clip => {
       const buf = await fetchBuffer(ctx, clip.url)
       if (!buf) return null
-      const offset = Math.max(0, playheadStartRef.current - clip.start)
-      const dur = Math.max(0, clip.duration - offset)
+      const mediaDur = clip.mediaDuration ?? bufferDurRef.current.get(clip.url || '') ?? buf.duration
+      const clipOffset = clip.mediaOffset ?? 0
+      const offset = Math.max(0, playheadStartRef.current - clip.start + clipOffset)
+      const dur = Math.max(0, Math.min(mediaDur - offset, clip.duration))
       if (dur <= 0) return null
       const when = startAt + Math.max(0, clip.start - playheadStartRef.current)
       const src = ctx.createBufferSource()
@@ -479,11 +485,13 @@ function App() {
     }
     if (activeVideoIdRef.current !== active.id) {
       vid.src = active.url || ''
-      vid.currentTime = Math.max(0, pos - active.start)
+      const offset = active.mediaOffset ?? 0
+      vid.currentTime = Math.max(0, pos - active.start + offset)
       vid.play().catch(() => { /* ignore autoplay blocks */ })
       activeVideoIdRef.current = active.id
     } else {
-      const target = Math.max(0, pos - active.start)
+      const offset = active.mediaOffset ?? 0
+      const target = Math.max(0, pos - active.start + offset)
       if (Math.abs(vid.currentTime - target) > 0.05) vid.currentTime = target
       if (vid.paused && playing) vid.play().catch(() => {})
     }
