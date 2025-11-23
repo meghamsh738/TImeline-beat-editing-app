@@ -3,7 +3,8 @@ import path from 'path'
 
 const timelineTrackLane = '.track-lane'
 
-const sampleAudioPath = path.join(process.cwd(), 'public', 'samples', 'sample-3s.wav')
+const sampleAudioPath = path.join(process.cwd(), 'public', 'samples', 'free-tone-10s.wav')
+const sampleImagePath = path.join(process.cwd(), 'public', 'samples', 'mars-1280.jpg')
 
 const waitForRenderIdle = async (page: Page) => {
   await page.waitForTimeout(400)
@@ -12,6 +13,9 @@ const waitForRenderIdle = async (page: Page) => {
 test('timeline basics, snapping, loop handles, asset drop, export', async ({ page }) => {
   await page.goto('/')
   await expect(page.getByText('Premiere-style timeline prototype')).toBeVisible()
+
+  // landing view
+  await page.screenshot({ path: 'screenshots/edit-overview.png', fullPage: true })
 
   // marker click moves playhead
   await page.getByText('Markers').scrollIntoViewIfNeeded()
@@ -39,8 +43,9 @@ test('timeline basics, snapping, loop handles, asset drop, export', async ({ pag
   // asset upload + drag to track
   await page.getByRole('button', { name: 'Assets' }).click()
   const input = page.locator('input[type="file"]')
-  await input.setInputFiles(sampleAudioPath)
+  await input.setInputFiles([sampleAudioPath, sampleImagePath])
   await waitForRenderIdle(page)
+  await page.screenshot({ path: 'screenshots/assets.png', fullPage: true })
   const assetRow = page.locator('.asset-row').first()
   await expect(assetRow).toBeVisible()
   const sendButton = assetRow.getByRole('button', { name: /Send to/ }).first()
@@ -56,6 +61,8 @@ test('timeline basics, snapping, loop handles, asset drop, export', async ({ pag
   const renderBtn = page.getByRole('button', { name: 'Render preset' })
   await renderBtn.click()
   await page.waitForTimeout(600)
+
+  await page.screenshot({ path: 'screenshots/export.png', fullPage: true })
 
   await page.screenshot({ path: 'screenshots/timeline.png', fullPage: true })
 })
