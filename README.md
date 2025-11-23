@@ -8,9 +8,9 @@ Quick start
 - `npm run dev -- --host --port 4178` then open http://localhost:4178
 
 Captures (see `web/screenshots/`)
-- Edit overview: `web/screenshots/edit-overview.png`
-- Assets tab (with free sample image + tone): `web/screenshots/assets.png`
-- Export tab: `web/screenshots/export.png`
+- Edit overview: `web/screenshots/edit-overview-v2.png`
+- Assets tab (with free sample image + tone): `web/screenshots/assets-v2.png`
+- Export tab: `web/screenshots/export-v2.png`
 - Run video: `web/screenshots/timeline-run.webm`
 
 Tests & build (from `web/`)

@@ -16,6 +16,7 @@ test('timeline basics, snapping, loop handles, asset drop, export', async ({ pag
 
   // landing view
   await page.screenshot({ path: 'screenshots/edit-overview.png', fullPage: true })
+  await page.screenshot({ path: 'screenshots/edit-overview-v2.png', fullPage: true })
 
   // marker click moves playhead
   await page.getByText('Markers').scrollIntoViewIfNeeded()
@@ -46,6 +47,7 @@ test('timeline basics, snapping, loop handles, asset drop, export', async ({ pag
   await input.setInputFiles([sampleAudioPath, sampleImagePath])
   await waitForRenderIdle(page)
   await page.screenshot({ path: 'screenshots/assets.png', fullPage: true })
+  await page.screenshot({ path: 'screenshots/assets-v2.png', fullPage: true })
   const assetRow = page.locator('.asset-row').first()
   await expect(assetRow).toBeVisible()
   const sendButton = assetRow.getByRole('button', { name: /Send to/ }).first()
@@ -63,6 +65,8 @@ test('timeline basics, snapping, loop handles, asset drop, export', async ({ pag
   await page.waitForTimeout(600)
 
   await page.screenshot({ path: 'screenshots/export.png', fullPage: true })
+  await page.screenshot({ path: 'screenshots/export-v2.png', fullPage: true })
 
   await page.screenshot({ path: 'screenshots/timeline.png', fullPage: true })
+  await page.screenshot({ path: 'screenshots/timeline-v2.png', fullPage: true })
 })
