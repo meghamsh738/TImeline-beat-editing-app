@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import type React from 'react'
 import './App.css'
 
 type Clip = {
@@ -13,6 +14,12 @@ type Clip = {
 type Marker = { time: number; label: string; color: string }
 
 type Track = { id: string; name: string; type: 'video' | 'audio' }
+
+type ProjectState = {
+  tracks: Track[]
+  clips: Clip[]
+  markers: Marker[]
+}
 
 const DEFAULT_TRACKS: Track[] = [
   { id: 'v1', name: 'V1 · Motion', type: 'video' },
@@ -39,6 +46,54 @@ const TOTAL_DURATION = 18
 
 const STORAGE_KEY = 'timeline-builder-project-v1'
 
+type HistoryOpts = { push?: boolean }
+
+function useHistoryState<T>(initial: T, limit = 80) {
+  const [state, setState] = useState<T>(initial)
+  const historyRef = useRef<T[]>([initial])
+  const pointerRef = useRef(0)
+
+  const commit = (updater: T | ((prev: T) => T), opts: HistoryOpts = { push: true }) => {
+    setState(prev => {
+      const next = typeof updater === 'function' ? (updater as (p: T) => T)(prev) : updater
+      if (opts.push !== false) {
+        const sliced = historyRef.current.slice(0, pointerRef.current + 1)
+        const nextHistory = [...sliced, next]
+        if (nextHistory.length > limit) nextHistory.shift()
+        historyRef.current = nextHistory
+        pointerRef.current = historyRef.current.length - 1
+      }
+      return next
+    })
+  }
+
+  const pushCheckpoint = () => {
+    const current = historyRef.current[pointerRef.current]
+    const sliced = historyRef.current.slice(0, pointerRef.current + 1)
+    const nextHistory = [...sliced, current]
+    if (nextHistory.length > limit) nextHistory.shift()
+    historyRef.current = nextHistory
+    pointerRef.current = historyRef.current.length - 1
+  }
+
+  const undo = () => {
+    if (pointerRef.current === 0) return
+    pointerRef.current -= 1
+    setState(historyRef.current[pointerRef.current])
+  }
+
+  const redo = () => {
+    if (pointerRef.current >= historyRef.current.length - 1) return
+    pointerRef.current += 1
+    setState(historyRef.current[pointerRef.current])
+  }
+
+  const canUndo = pointerRef.current > 0
+  const canRedo = pointerRef.current < historyRef.current.length - 1
+
+  return { state, set: commit, undo, redo, canUndo, canRedo, pushCheckpoint }
+}
+
 const formatTime = (t: number) => {
   const mins = Math.floor(t / 60)
   const secs = t % 60
@@ -49,12 +104,23 @@ function App() {
   const [activeTab, setActiveTab] = useState<'edit' | 'assets' | 'export'>('edit')
   const [playhead, setPlayhead] = useState(4.5)
   const [zoom, setZoom] = useState(1.4) // multiplier for px/sec
-  const [tracks, setTracks] = useState<Track[]>(() => DEFAULT_TRACKS)
-  const [clips, setClips] = useState<Clip[]>(() => DEFAULT_CLIPS)
-  const [markers, setMarkers] = useState<Marker[]>(() => DEFAULT_MARKERS)
+  const { state: project, set: setProject, undo, redo, canUndo, canRedo, pushCheckpoint } = useHistoryState<ProjectState>(
+    { tracks: DEFAULT_TRACKS, clips: DEFAULT_CLIPS, markers: DEFAULT_MARKERS }
+  )
+  const { tracks, clips, markers } = project
   const [selectedClip, setSelectedClip] = useState<string | null>(null)
 
   const timelineRef = useRef<HTMLDivElement | null>(null)
+
+  type DragInfo = {
+    id: string
+    mode: 'move' | 'trim-start' | 'trim-end'
+    startX: number
+    origStart: number
+    origDuration: number
+  }
+  const dragRef = useRef<DragInfo | null>(null)
+  const dragStartedState = useRef<ProjectState | null>(null)
 
   // Restore project from localStorage once
   useEffect(() => {
@@ -62,9 +128,11 @@ function App() {
     if (saved) {
       try {
         const parsed = JSON.parse(saved)
-        setTracks(parsed.tracks ?? DEFAULT_TRACKS)
-        setClips(parsed.clips ?? DEFAULT_CLIPS)
-        setMarkers(parsed.markers ?? DEFAULT_MARKERS)
+        setProject({
+          tracks: parsed.tracks ?? DEFAULT_TRACKS,
+          clips: parsed.clips ?? DEFAULT_CLIPS,
+          markers: parsed.markers ?? DEFAULT_MARKERS
+        })
       } catch (err) {
         console.warn('Failed to parse saved project', err)
       }
@@ -73,9 +141,9 @@ function App() {
 
   // Persist project
   useEffect(() => {
-    const payload = JSON.stringify({ tracks, clips, markers })
+    const payload = JSON.stringify(project)
     localStorage.setItem(STORAGE_KEY, payload)
-  }, [tracks, clips, markers])
+  }, [project])
 
   // Keyboard nudging for selected clip
   useEffect(() => {
@@ -83,14 +151,22 @@ function App() {
       if (!selectedClip) return
       const step = e.shiftKey ? 0.5 : 0.1
       if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
-        setClips(prev => prev.map(c => c.id === selectedClip
-          ? { ...c, start: Math.max(0, c.start + (e.key === 'ArrowLeft' ? -step : step)) }
-          : c))
+        setProject(prev => ({
+          ...prev,
+          clips: prev.clips.map(c => c.id === selectedClip
+            ? { ...c, start: Math.max(0, c.start + (e.key === 'ArrowLeft' ? -step : step)) }
+            : c)
+        }), { push: false })
+        pushCheckpoint()
+      }
+      if (e.metaKey || e.ctrlKey) {
+        if (e.key.toLowerCase() === 'z' && !e.shiftKey) undo()
+        if (e.key.toLowerCase() === 'z' && e.shiftKey) redo()
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [selectedClip])
+  }, [selectedClip, setProject, pushCheckpoint, undo, redo])
 
   const pxPerSec = useMemo(() => 80 * zoom, [zoom])
 
@@ -109,7 +185,7 @@ function App() {
     const palette = ['#22d3ee', '#f97316', '#e11d48', '#a78bfa', '#22c55e']
     const color = palette[(markers.length) % palette.length]
     const label = `Marker ${markers.length + 1}`
-    setMarkers([...markers, { time: playhead, label, color }])
+    setProject(prev => ({ ...prev, markers: [...prev.markers, { time: playhead, label, color }] }))
   }
 
   const handleRulerClick = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -134,11 +210,71 @@ function App() {
     if (!file) return
     file.text().then(txt => {
       const data = JSON.parse(txt)
-      setTracks(data.tracks ?? DEFAULT_TRACKS)
-      setClips(data.clips ?? DEFAULT_CLIPS)
-      setMarkers(data.markers ?? DEFAULT_MARKERS)
+      setProject({
+        tracks: data.tracks ?? DEFAULT_TRACKS,
+        clips: data.clips ?? DEFAULT_CLIPS,
+        markers: data.markers ?? DEFAULT_MARKERS
+      })
     }).catch(err => console.error('Import failed', err))
   }
+
+  const startDrag = (e: React.MouseEvent<HTMLDivElement>, clip: Clip) => {
+    const rect = e.currentTarget.getBoundingClientRect()
+    const offsetX = e.clientX - rect.left
+    const handleZone = 10
+    let mode: DragInfo['mode'] = 'move'
+    if (offsetX < handleZone) mode = 'trim-start'
+    else if (offsetX > rect.width - handleZone) mode = 'trim-end'
+
+    dragRef.current = {
+      id: clip.id,
+      mode,
+      startX: e.clientX,
+      origStart: clip.start,
+      origDuration: clip.duration
+    }
+    dragStartedState.current = project
+    setSelectedClip(clip.id)
+  }
+
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      if (!dragRef.current) return
+      const { id, mode, startX, origStart, origDuration } = dragRef.current
+      const deltaSec = (e.clientX - startX) / pxPerSec
+      const minDur = 0.2
+      setProject(prev => ({
+        ...prev,
+        clips: prev.clips.map(c => {
+          if (c.id !== id) return c
+          if (mode === 'move') {
+            return { ...c, start: clampTime(origStart + deltaSec) }
+          }
+          if (mode === 'trim-start') {
+            const newStart = clampTime(origStart + deltaSec)
+            const newDur = Math.max(minDur, origDuration - (newStart - origStart))
+            return { ...c, start: newStart, duration: newDur }
+          }
+          const newDur = Math.max(minDur, origDuration + deltaSec)
+          return { ...c, duration: newDur }
+        })
+      }), { push: false })
+    }
+
+    const onUp = () => {
+      if (dragRef.current) {
+        dragRef.current = null
+        pushCheckpoint()
+      }
+    }
+
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+    return () => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+  }, [pxPerSec, setProject, pushCheckpoint])
 
   return (
     <div className="app">
@@ -147,9 +283,9 @@ function App() {
           <p className="eyebrow">Timeline Builder · fastfx</p>
           <h1>Premiere-style timeline prototype</h1>
         </div>
-        <div className="controls-row">
-          <label className="pill">
-            FPS
+          <div className="controls-row">
+            <label className="pill">
+              FPS
             <select defaultValue="30">
               <option value="24">24</option>
               <option value="30">30</option>
@@ -161,6 +297,10 @@ function App() {
             <button>⏮</button>
             <button>▶</button>
             <button>⏭</button>
+          </div>
+          <div className="pill">
+            <button disabled={!canUndo} onClick={undo}>⌘Z Undo</button>
+            <button disabled={!canRedo} onClick={redo}>⇧⌘Z Redo</button>
           </div>
         </div>
       </header>
@@ -249,6 +389,7 @@ function App() {
                             background: clip.color
                           }}
                           title={`${clip.title} (${formatTime(clip.start)} - ${formatTime(clip.start + clip.duration)})`}
+                          onMouseDown={(e) => startDrag(e, clip)}
                           onClick={() => setSelectedClip(clip.id)}
                         >
                           <span>{clip.title}</span>
