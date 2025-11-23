@@ -220,6 +220,8 @@ function App() {
   const sourcesRef = useRef<AudioBufferSourceNode[]>([])
   const playheadStartRef = useRef<number>(0)
   const playStartTimeRef = useRef<number>(0)
+  const videoRef = useRef<HTMLVideoElement | null>(null)
+  const activeVideoIdRef = useRef<string | null>(null)
 
   const timelineRef = useRef<HTMLDivElement | null>(null)
   const [viewWindow, setViewWindow] = useState({ start: 0, duration: 8 })
@@ -269,6 +271,12 @@ function App() {
     return () => stopPlayback()
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [playing, loopEnabled, loopRange, clips])
+
+  // keep video preview synced while scrubbing
+  useEffect(() => {
+    syncVideoToPlayhead(playhead)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [playhead])
 
   // Keyboard: nudge, playback toggles, undo/redo, delete/duplicate
   useEffect(() => {
@@ -341,6 +349,11 @@ function App() {
     sourcesRef.current = []
     if (rafRef.current) cancelAnimationFrame(rafRef.current)
     rafRef.current = null
+    const vid = videoRef.current
+    if (vid) {
+      vid.pause()
+      activeVideoIdRef.current = null
+    }
   }
 
   const fetchBuffer = async (ctx: AudioContext, url?: string) => {
@@ -395,10 +408,32 @@ function App() {
         return
       }
       setPlayhead(clampTime(nextPos))
+      syncVideoToPlayhead(nextPos)
       rafRef.current = requestAnimationFrame(tick)
     }
 
     rafRef.current = requestAnimationFrame(tick)
+  }
+
+  const syncVideoToPlayhead = (pos: number) => {
+    const vid = videoRef.current
+    if (!vid) return
+    const active = clips.find(c => (c.assetType || '').startsWith('video') && c.url && pos >= c.start && pos <= c.start + c.duration)
+    if (!active) {
+      vid.pause()
+      activeVideoIdRef.current = null
+      return
+    }
+    if (activeVideoIdRef.current !== active.id) {
+      vid.src = active.url || ''
+      vid.currentTime = Math.max(0, pos - active.start)
+      vid.play().catch(() => { /* ignore autoplay blocks */ })
+      activeVideoIdRef.current = active.id
+    } else {
+      const target = Math.max(0, pos - active.start)
+      if (Math.abs(vid.currentTime - target) > 0.05) vid.currentTime = target
+      if (vid.paused && playing) vid.play().catch(() => {})
+    }
   }
 
   const collectSnapPoints = (trackId: string, excludeId?: string): SnapPoint[] => {
@@ -829,8 +864,13 @@ function App() {
       </div>
 
       {activeTab === 'edit' && (
-        <div className="layout">
+      <div className="layout">
           <aside className="sidepanel">
+            <div className="panel-head">Preview</div>
+            <div className="preview-box">
+              <video ref={videoRef} muted playsInline controls width="100%" height="160" />
+              <div className="muted small">Auto-syncs to video clips on the timeline.</div>
+            </div>
             <div className="panel-head">Assets</div>
             <ul className="asset-list">
               {['intro.mp4', 'broll.mov', 'main.wav', 'foley.wav'].map((a) => (
