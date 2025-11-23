@@ -115,20 +115,25 @@ const decodeWaveform = async (file: File): Promise<number[] | null> => {
     const buffer = await file.arrayBuffer()
     const ctx = new AudioContext({ sampleRate: 48000 })
     const audio = await ctx.decodeAudioData(buffer)
-    const channel = audio.getChannelData(0)
-    const buckets = Math.min(256, Math.max(64, Math.floor(channel.length / 6000)))
-    const step = Math.max(1, Math.floor(channel.length / buckets))
-    const samples: number[] = []
+    const channelL = audio.getChannelData(0)
+    const channelR = audio.numberOfChannels > 1 ? audio.getChannelData(1) : null
+    const buckets = Math.min(512, Math.max(96, Math.floor(channelL.length / 4000)))
+    const step = Math.max(1, Math.floor(channelL.length / buckets))
+    const samplesL: number[] = []
+    const samplesR: number[] = []
     for (let i = 0; i < buckets; i++) {
-      let sum = 0
+      let sumL = 0
+      let sumR = 0
       for (let j = 0; j < step; j++) {
-        const v = channel[i * step + j]
-        sum += Math.abs(v)
+        const idx = i * step + j
+        sumL += Math.abs(channelL[idx])
+        if (channelR) sumR += Math.abs(channelR[idx])
       }
-      samples.push(sum / step)
+      samplesL.push(sumL / step)
+      if (channelR) samplesR.push(sumR / step)
     }
-    const max = Math.max(...samples, 0.001)
-    return samples.map(s => s / max)
+    const max = Math.max(...samplesL, ...(samplesR.length ? samplesR : [0.001]), 0.001)
+    return samplesL.map((s, i) => (s + (samplesR[i] || s)) / (samplesR.length ? 2 : 1) / max)
   } catch (err) {
     console.warn('waveform decode failed', err)
     return null
