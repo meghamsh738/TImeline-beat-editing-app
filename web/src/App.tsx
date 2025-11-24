@@ -604,6 +604,11 @@ function App() {
         mediaDuration: asset.duration,
         mediaOffset: 0
       }
+      // gap-safe place: if overlap disabled, bump start just after previous
+      const prevSibling = trackClips.at(-1)
+      if (!allowOverlap && prevSibling && newClip.start < prevSibling.start + prevSibling.duration) {
+        newClip.start = prevSibling.start + prevSibling.duration + 0.01
+      }
       return { ...prev, clips: [...prev.clips, newClip] }
     })
     pushCheckpoint()
@@ -784,24 +789,24 @@ function App() {
             return { ...c, mediaOffset: boundedOffset, start: origStart, duration: origDuration }
           }
           if (mode === 'slide') {
-            // Slide keeps length, moves clip while pushing/pulling neighbors on same track
-            let candidate = clampTime(origStart + deltaSec)
+            // Slide keeps length, moves clip while pushing/pulling neighbors on same track (no overlaps/gaps)
             const prevSibling = siblings.filter(s => s.start + s.duration <= origStart).at(-1)
             const nextSibling = siblings.find(s => s.start >= origStart)
-            if (!allowOverlap) {
-              if (prevSibling && candidate < prevSibling.start + prevSibling.duration) {
-                candidate = prevSibling.start + prevSibling.duration + 0.01
-              }
-              if (nextSibling && candidate + c.duration > nextSibling.start) {
-                candidate = Math.max(0, nextSibling.start - c.duration - 0.01)
-              }
+            if (!prevSibling || !nextSibling) {
+              // fallback to move if no both neighbors
+              const candidate = clampTime(origStart + deltaSec)
+              return { ...c, start: candidate }
             }
+            const maxLeft = prevSibling.start + prevSibling.duration + 0.01
+            const maxRight = nextSibling.start - c.duration - 0.01
+            let candidate = clampTime(origStart + deltaSec)
+            candidate = Math.min(Math.max(candidate, maxLeft), maxRight)
             const deltaSlide = candidate - origStart
             updatedClips = updatedClips.map(o => {
               if (o.id === c.id) return { ...o, start: candidate }
               if (o.track !== trackId) return o
-              if (prevSibling && o.id === prevSibling.id) return { ...o, duration: Math.max(MIN_CLIP, o.duration + deltaSlide) }
-              if (nextSibling && o.id === nextSibling.id) return { ...o, start: clampTime(o.start + deltaSlide), duration: Math.max(MIN_CLIP, o.duration - deltaSlide) }
+              if (o.id === prevSibling.id) return { ...o, duration: Math.max(MIN_CLIP, o.duration + deltaSlide) }
+              if (o.id === nextSibling.id) return { ...o, start: clampTime(o.start + deltaSlide), duration: Math.max(MIN_CLIP, o.duration - deltaSlide) }
               return o
             })
             return updatedClips.find(o => o.id === id) as Clip
