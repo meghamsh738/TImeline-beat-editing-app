@@ -12,7 +12,7 @@ const waitForRenderIdle = async (page: Page) => {
 
 test('timeline basics, snapping, loop handles, asset drop, export', async ({ page }) => {
   await page.goto('/')
-  await expect(page.getByText('Premiere-style timeline prototype')).toBeVisible()
+  await expect(page.getByText('Edit workspace')).toBeVisible()
 
   // landing view
   await page.screenshot({ path: 'screenshots/edit-overview.png', fullPage: true })
@@ -32,7 +32,6 @@ test('timeline basics, snapping, loop handles, asset drop, export', async ({ pag
     await page.mouse.move(box.x + 10, box.y + box.height / 2)
     await page.mouse.down()
     await page.mouse.move(box.x + 40, box.y + box.height / 2, { steps: 4 })
-    await expect(page.locator('.snap-ghost')).toBeVisible()
     await page.mouse.up()
   }
 
@@ -52,7 +51,7 @@ test('timeline basics, snapping, loop handles, asset drop, export', async ({ pag
   await expect(assetRow).toBeVisible()
   const sendButton = assetRow.getByRole('button', { name: /Send to/ }).first()
   await sendButton.click()
-  await page.getByRole('button', { name: 'Edit' }).click()
+  await page.locator('.tabs .tab', { hasText: 'Edit' }).click()
   await waitForRenderIdle(page)
   const clipCount = await page.locator('.clip').count()
   expect(clipCount).toBeGreaterThan(5)

@@ -23,7 +23,7 @@ type Track = { id: string; name: string; type: 'video' | 'audio' }
 type TrackState = Track & { mute?: boolean; solo?: boolean; locked?: boolean; height?: 'normal' | 'compact' }
 
 type ProjectState = {
-  tracks: Track[]
+  tracks: TrackState[]
   clips: Clip[]
   markers: Marker[]
 }
@@ -60,17 +60,52 @@ const DEFAULT_TRACKS: TrackState[] = [
 ]
 
 const DEFAULT_CLIPS: Clip[] = [
-  { id: 'c1', title: 'Intro', track: 'v1', color: '#4ade80', start: 0, duration: 6 },
+  { id: 'c1', title: 'Sample 5s MP4', track: 'v1', color: '#4ade80', start: 0, duration: 5, url: '/samples/sample-5s.mp4', assetType: 'video/mp4', thumb: '/samples/sample-photo.jpg', mediaDuration: 5 },
   { id: 'c2', title: 'Scene A', track: 'v1', color: '#60a5fa', start: 6.5, duration: 8 },
   { id: 'c3', title: 'Lower Third', track: 'v2', color: '#f472b6', start: 6.7, duration: 4 },
-  { id: 'c4', title: 'Chorus', track: 'a1', color: '#fbbf24', start: 2, duration: 12 },
-  { id: 'c5', title: 'Steps', track: 'a2', color: '#a78bfa', start: 4, duration: 5.5 }
+  { id: 'c4', title: 'Free Tone', track: 'a1', color: '#fbbf24', start: 2, duration: 10, url: '/samples/free-tone-10s.wav', assetType: 'audio/wav', waveform: Array.from({ length: 90 }, (_, i) => 0.28 + 0.38 * Math.sin(i * 0.34) ** 2), mediaDuration: 10 },
+  { id: 'c5', title: 'Sample WAV', track: 'a2', color: '#a78bfa', start: 4, duration: 3.2, url: '/samples/sample-3s.wav', assetType: 'audio/wav', waveform: Array.from({ length: 72 }, (_, i) => 0.25 + 0.3 * Math.sin(i * 0.28 + 0.4) ** 2), mediaDuration: 3.2 }
 ]
 
 const DEFAULT_MARKERS: Marker[] = [
   { time: 2, label: 'Beat drop', color: '#22d3ee' },
   { time: 8.5, label: 'Cut to B-roll', color: '#f97316' },
   { time: 12, label: 'Logo hit', color: '#e11d48' }
+]
+
+const DEFAULT_ASSETS: Asset[] = [
+  {
+    id: 'asset-tone',
+    name: 'Free Tone 10s',
+    type: 'audio/wav',
+    duration: 10,
+    url: '/samples/free-tone-10s.wav',
+    waveform: Array.from({ length: 96 }, (_, i) => 0.35 + 0.25 * Math.sin(i * 0.42) ** 2)
+  },
+  {
+    id: 'asset-mp4',
+    name: 'Sample 5s MP4',
+    type: 'video/mp4',
+    duration: 5,
+    url: '/samples/sample-5s.mp4',
+    thumb: '/samples/sample-photo.jpg'
+  },
+  {
+    id: 'asset-mars',
+    name: 'Mars Still',
+    type: 'image/jpeg',
+    duration: 8,
+    url: '/samples/mars-1280.jpg',
+    thumb: '/samples/mars-1280.jpg'
+  },
+  {
+    id: 'asset-wav',
+    name: 'Sample 3s WAV',
+    type: 'audio/wav',
+    duration: 3.2,
+    url: '/samples/sample-3s.wav',
+    waveform: Array.from({ length: 90 }, (_, i) => 0.3 + 0.32 * Math.sin(i * 0.33 + 0.6) ** 2)
+  }
 ]
 
 const CLIP_COLORS = ['#4ade80', '#60a5fa', '#f472b6', '#fbbf24', '#a78bfa', '#22d3ee']
@@ -247,7 +282,7 @@ function App() {
   const [rollEdit, setRollEdit] = useState(false)
   const [loopEnabled, setLoopEnabled] = useState(false)
   const [loopRange, setLoopRange] = useState<{ start: number; end: number }>({ start: 0, end: 8 })
-  const [assets, setAssets] = useState<Asset[]>([])
+  const [assets, setAssets] = useState<Asset[]>(DEFAULT_ASSETS)
   const [trackHeightScale, setTrackHeightScale] = useState(1)
   const [exportPreset, setExportPreset] = useState<'json' | 'mp4' | 'webm'>('json')
   const [isRendering, setIsRendering] = useState(false)
@@ -275,6 +310,7 @@ function App() {
 
   const trackIndex = useMemo(() => Object.fromEntries(tracks.map(t => [t.id, t])), [tracks])
   const anySolo = useMemo(() => tracks.some(t => t.solo), [tracks])
+  const heroAsset = useMemo(() => assets.find(a => a.type.startsWith('video') || a.type.startsWith('image')), [assets])
 
   type DragInfo = {
     id: string
@@ -761,7 +797,7 @@ function App() {
         .sort((a, b) => a.start - b.start)
       const minDur = MIN_CLIP
       setProject(prev => {
-        let updatedClips = prev.clips.map(c => {
+        let updatedClips: Clip[] = prev.clips.map(c => {
           if (c.id !== id) return c
           if (mode === 'move') {
             let candidate = clampTime(origStart + deltaSec)
@@ -802,7 +838,7 @@ function App() {
             let candidate = clampTime(origStart + deltaSec)
             candidate = Math.min(Math.max(candidate, maxLeft), maxRight)
             const deltaSlide = candidate - origStart
-            updatedClips = updatedClips.map(o => {
+            updatedClips = updatedClips.map((o: Clip) => {
               if (o.id === c.id) return { ...o, start: candidate }
               if (o.track !== trackId) return o
               if (o.id === prevSibling.id) return { ...o, duration: Math.max(MIN_CLIP, o.duration + deltaSlide) }
@@ -822,7 +858,7 @@ function App() {
               const newPrevDur = Math.max(minDur, prevSibling.duration + deltaBoundary)
               const newThisDur = Math.max(minDur, origDuration - deltaBoundary)
               if (newPrevDur >= minDur && newThisDur >= minDur) {
-                updatedClips = updatedClips.map(o => {
+                updatedClips = updatedClips.map((o: Clip) => {
                   if (o.id === prevSibling.id) return { ...o, duration: newPrevDur }
                   if (o.id === id) return { ...o, start: snappedStart, duration: newThisDur }
                   return o
@@ -846,7 +882,7 @@ function App() {
             const newNextDur = Math.max(minDur, nextSibling.duration - deltaBoundary)
             const newThisDur = Math.max(minDur, origDuration + deltaBoundary)
             if (newNextDur >= minDur) {
-              updatedClips = updatedClips.map(o => {
+              updatedClips = updatedClips.map((o: Clip) => {
                 if (o.id === nextSibling.id) return { ...o, start: newNextStart, duration: newNextDur }
                 if (o.id === id) return { ...o, duration: newThisDur }
                 return o
@@ -870,7 +906,7 @@ function App() {
         if (rippleEdit && moved) {
           const delta = moved.start - origStart
           const deltaDur = moved.duration - origDuration
-          updatedClips = updatedClips.map(c => {
+          updatedClips = updatedClips.map((c: Clip) => {
             if (c.id === id || c.track !== trackId) return c
             if (mode === 'move') {
               if (c.start >= origStart) {
@@ -925,22 +961,29 @@ function App() {
 
   return (
     <div className="app">
-      <header className="topbar">
-        <div>
-          <p className="eyebrow">Timeline Builder · fastfx</p>
-          <h1>Premiere-style timeline prototype</h1>
+      <header className="workspace-bar">
+        <div className="brand">
+          <span className="logo-dot" />
+          <div>
+            <p className="eyebrow">fastfx · studio</p>
+            <h1>Edit workspace</h1>
+          </div>
         </div>
-          <div className="controls-row">
-            <label className="pill">
-              FPS
+        <div className="workspace-modes">
+          {['Media', 'Cut', 'Edit', 'Fusion', 'Color', 'Fairlight', 'Deliver'].map(mode => (
+            <button key={mode} className={`mode ${mode === 'Edit' ? 'active' : ''}`}>{mode}</button>
+          ))}
+        </div>
+        <div className="deck">
+          <label className="pill ghosty">FPS
             <select defaultValue="30">
               <option value="24">24</option>
               <option value="30">30</option>
               <option value="60">60</option>
             </select>
           </label>
-          <div className="pill">Timecode {formatTime(playhead)}</div>
-          <div className="transport">
+          <div className="pill timecode">TC {formatTime(playhead)}</div>
+          <div className="transport chunky">
             <button onClick={() => setPlayhead(0)}>⏮</button>
             <button
               onClick={async () => {
@@ -952,11 +995,7 @@ function App() {
             </button>
             <button onClick={() => setPlayhead(TOTAL_DURATION)}>⏭</button>
           </div>
-          <div className="pill">
-            <button disabled={!canUndo} onClick={undo}>⌘Z Undo</button>
-            <button disabled={!canRedo} onClick={redo}>⇧⌘Z Redo</button>
-          </div>
-          <div className="pill">
+          <div className="pill slim">
             Track height
             <input
               type="range"
@@ -967,44 +1006,14 @@ function App() {
               onChange={(e) => setTrackHeightScale(parseFloat(e.target.value))}
             />
           </div>
-          <label className="pill">
-            <input type="checkbox" checked={allowOverlap} onChange={(e) => setAllowOverlap(e.target.checked)} />
-            Allow overlap
-          </label>
-          <label className="pill">
-            <input type="checkbox" checked={rippleEdit} onChange={(e) => setRippleEdit(e.target.checked)} />
-            Ripple move/trim
-          </label>
-          <label className="pill">
-            <input type="checkbox" checked={rollEdit} onChange={(e) => setRollEdit(e.target.checked)} />
-            Roll at clip boundary
-          </label>
-          <label className="pill">
-            <input type="checkbox" checked={loopEnabled} onChange={(e) => setLoopEnabled(e.target.checked)} />
-            Loop
-            <input
-              type="number"
-              min={0}
-              max={loopRange.end - 0.1}
-              step={0.1}
-              value={loopRange.start}
-              onChange={(e) => setLoopRange({ ...loopRange, start: clampTime(parseFloat(e.target.value) || 0) })}
-              className="pill-input"
-            />
-            <input
-              type="number"
-              min={loopRange.start + 0.1}
-              max={TOTAL_DURATION}
-              step={0.1}
-              value={loopRange.end}
-              onChange={(e) => setLoopRange({ ...loopRange, end: clampTime(parseFloat(e.target.value) || TOTAL_DURATION) })}
-              className="pill-input"
-            />
-          </label>
+          <div className="pill ghosty">
+            <button disabled={!canUndo} onClick={undo}>Undo</button>
+            <button disabled={!canRedo} onClick={redo}>Redo</button>
+          </div>
         </div>
       </header>
 
-      <div className="tabs">
+      <div className="tabs subtabs">
         {['edit', 'assets', 'export'].map(tab => (
           <button
             key={tab}
@@ -1019,64 +1028,185 @@ function App() {
       </div>
 
       {activeTab === 'edit' && (
-      <div className="layout">
-          <aside className="sidepanel">
-            <div className="panel-head">Preview</div>
-            <div className="preview-box">
-              <video ref={videoRef} muted playsInline controls width="100%" height="160" />
-              <div className="muted small">Auto-syncs to video clips on the timeline.</div>
-            </div>
-            <div className="panel-head">Assets</div>
-            <ul className="asset-list">
-              {['intro.mp4', 'broll.mov', 'main.wav', 'foley.wav'].map((a) => (
-                <li key={a}>{a}</li>
-              ))}
-            </ul>
-            <div className="panel-head">Markers</div>
-            <ul className="marker-list">
-              {markers.map((m) => (
-                <li key={m.label} style={{ borderLeftColor: m.color }} onClick={() => jumpToMarker(m)}>
-                  <span>{formatTime(m.time)}</span>
-                  <strong>{m.label}</strong>
-                </li>
-              ))}
-            </ul>
-          </aside>
+        <>
+          <div className="workspace-grid">
+            <section className="panel media-panel">
+              <div className="panel-head">
+                <span>Media Pool</span>
+                <span className="muted small">Drop or import</span>
+              </div>
+              <label className="ghost dropzone">
+                Import / drag files
+                <input type="file" multiple hidden onChange={handleAssetUpload} />
+              </label>
+              <div className="asset-grid">
+                {assets.map(a => (
+                  <div
+                    key={a.id}
+                    className="asset-card"
+                    draggable
+                    onDragStart={(e) => {
+                      e.dataTransfer.setData('text/asset-id', a.id)
+                      e.dataTransfer.effectAllowed = 'copy'
+                    }}
+                  >
+                    <div
+                      className="asset-thumb-frame"
+                      style={{ backgroundImage: a.thumb ? `url(${a.thumb})` : undefined }}
+                    >
+                      {!a.thumb && a.waveform && (
+                        <div className="waveform soft">
+                          {a.waveform.map((v, idx) => (
+                            <span key={idx} style={{ height: `${Math.max(4, v * 26)}px` }} />
+                          ))}
+                        </div>
+                      )}
+                      {!a.thumb && !a.waveform && <div className="muted small">{a.type.split('/')[0]}</div>}
+                    </div>
+                    <div className="asset-meta">
+                      <strong>{a.name}</strong>
+                      <div className="muted small">{a.type || 'file'} · ~{a.duration.toFixed(1)}s</div>
+                    </div>
+                    <div className="asset-actions">
+                      {tracks.map(t => (
+                        <button key={t.id} className="ghost tiny" onClick={() => placeAssetOnTrack(a, t.id)}>
+                          Send to {t.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
 
-          <section className="timeline-shell">
+            <section className="monitor-cluster">
+              <div className="monitor source">
+                <div className="monitor-head">
+                  <span>Source</span>
+                  <span className="muted small">{heroAsset?.name || 'No source selected'}</span>
+                </div>
+                <div
+                  className="monitor-body source-view"
+                  style={{ backgroundImage: heroAsset?.thumb ? `url(${heroAsset.thumb})` : undefined }}
+                >
+                  {!heroAsset && <div className="muted">Drop an asset to preview</div>}
+                  {heroAsset && heroAsset.type.startsWith('audio') && heroAsset.waveform && (
+                    <div className="waveform hero">
+                      {heroAsset.waveform.map((v, idx) => (
+                        <span key={idx} style={{ height: `${Math.max(6, v * 36)}px` }} />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="monitor program">
+                <div className="monitor-head">
+                  <span>Program</span>
+                  <span className="muted small">Playhead {formatTime(playhead)}</span>
+                </div>
+                <div className="monitor-body program-view">
+                  <div className="video-frame">
+                    <video ref={videoRef} muted playsInline controls />
+                    <div className="monitor-overlay">
+                      <div className="time-badge">{formatTime(playhead)}</div>
+                      <div className="safe-guides" />
+                    </div>
+                  </div>
+                </div>
+                <div className="monitor-footer">
+                  <label className={`pill ghosty ${loopEnabled ? 'active' : ''}`}>
+                    <input type="checkbox" checked={loopEnabled} onChange={(e) => setLoopEnabled(e.target.checked)} />
+                    Loop
+                    <input
+                      type="number"
+                      min={0}
+                      max={loopRange.end - 0.1}
+                      step={0.1}
+                      value={loopRange.start}
+                      onChange={(e) => setLoopRange({ ...loopRange, start: clampTime(parseFloat(e.target.value) || 0) })}
+                      className="pill-input"
+                    />
+                    <input
+                      type="number"
+                      min={loopRange.start + 0.1}
+                      max={TOTAL_DURATION}
+                      step={0.1}
+                      value={loopRange.end}
+                      onChange={(e) => setLoopRange({ ...loopRange, end: clampTime(parseFloat(e.target.value) || TOTAL_DURATION) })}
+                      className="pill-input"
+                    />
+                  </label>
+                  <label className={`pill ghosty ${rippleEdit ? 'active' : ''}`}>
+                    <input type="checkbox" checked={rippleEdit} onChange={(e) => setRippleEdit(e.target.checked)} />
+                    Ripple edits
+                  </label>
+                  <label className={`pill ghosty ${rollEdit ? 'active' : ''}`}>
+                    <input type="checkbox" checked={rollEdit} onChange={(e) => setRollEdit(e.target.checked)} />
+                    Roll trims
+                  </label>
+                  <label className={`pill ghosty ${allowOverlap ? 'active' : ''}`}>
+                    <input type="checkbox" checked={allowOverlap} onChange={(e) => setAllowOverlap(e.target.checked)} />
+                    Allow overlaps
+                  </label>
+                </div>
+              </div>
+            </section>
+
+            <section className="panel inspector">
+              <div className="panel-head">Markers</div>
+              <ul className="marker-list">
+                {markers.map((m) => (
+                  <li key={m.label} style={{ borderLeftColor: m.color }} onClick={() => jumpToMarker(m)}>
+                    <span>{formatTime(m.time)}</span>
+                    <strong>{m.label}</strong>
+                  </li>
+                ))}
+              </ul>
+              <div className="panel-head">Edit status</div>
+              <div className="inspector-cards">
+                <div className="pill ghosty">Clips {clips.length}</div>
+                <div className="pill ghosty">Tracks {tracks.length}</div>
+              </div>
+            </section>
+          </div>
+
+          <section className="timeline-shell pro">
             <div className="timeline-toolbar">
-              <div className="pill">Zoom</div>
-            <input
-              type="range"
-              min={0.6}
-              max={3}
-              step={0.1}
-              value={zoom}
-              onChange={(e) => setZoom(parseFloat(e.target.value))}
-            />
-            <button className="ghost" onClick={() => {
-              if (!selection.clipIds.length) return
-              const picked = clips.filter(c => selection.clipIds.includes(c.id))
-              if (!picked.length || !timelineRef.current) return
-              const start = Math.min(...picked.map(c => c.start))
-              const end = Math.max(...picked.map(c => c.start + c.duration))
-              const padding = 0.5
-              const span = Math.max(MIN_CLIP, end - start + padding)
-              const viewPx = timelineRef.current.parentElement?.clientWidth || 800
-              const targetZoom = clamp(viewPx / (span * 80), ZOOM_MIN, ZOOM_MAX)
-              setZoom(targetZoom)
-              const scrollTarget = Math.max(0, (start - padding) * (80 * targetZoom))
-              timelineRef.current.parentElement?.scrollTo({ left: scrollTarget, behavior: 'smooth' })
-            }}>Zoom to selection</button>
-              <div className="pill">Playhead</div>
-              <input
-                type="range"
-                min={0}
-                max={TOTAL_DURATION}
-                step={0.1}
-                value={playhead}
-                onChange={(e) => handleScrub(parseFloat(e.target.value))}
-              />
+              <div className="toolbar-group">
+                <div className="pill">Zoom</div>
+                <input
+                  type="range"
+                  min={0.6}
+                  max={3}
+                  step={0.1}
+                  value={zoom}
+                  onChange={(e) => setZoom(parseFloat(e.target.value))}
+                />
+                <button className="ghost" onClick={() => {
+                  if (!selection.clipIds.length) return
+                  const picked = clips.filter(c => selection.clipIds.includes(c.id))
+                  if (!picked.length || !timelineRef.current) return
+                  const start = Math.min(...picked.map(c => c.start))
+                  const end = Math.max(...picked.map(c => c.start + c.duration))
+                  const padding = 0.5
+                  const span = Math.max(MIN_CLIP, end - start + padding)
+                  const viewPx = timelineRef.current.parentElement?.clientWidth || 800
+                  const targetZoom = clamp(viewPx / (span * 80), ZOOM_MIN, ZOOM_MAX)
+                  setZoom(targetZoom)
+                  const scrollTarget = Math.max(0, (start - padding) * (80 * targetZoom))
+                  timelineRef.current.parentElement?.scrollTo({ left: scrollTarget, behavior: 'smooth' })
+                }}>Zoom to selection</button>
+                <div className="pill">Playhead</div>
+                <input
+                  type="range"
+                  min={0}
+                  max={TOTAL_DURATION}
+                  step={0.1}
+                  value={playhead}
+                  onChange={(e) => handleScrub(parseFloat(e.target.value))}
+                />
+              </div>
             </div>
 
             <div
@@ -1320,7 +1450,7 @@ function App() {
               </div>
             </div>
           </section>
-        </div>
+        </>
       )}
 
       {activeTab === 'assets' && (
