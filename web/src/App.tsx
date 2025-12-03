@@ -1036,8 +1036,17 @@ function App() {
       const ffmpegMod = await import('@ffmpeg/ffmpeg')
       const createFFmpeg = (ffmpegMod as any).createFFmpeg || (ffmpegMod as any).default?.createFFmpeg
       if (!createFFmpeg) throw new Error('ffmpeg factory missing')
+      const pickCorePath = async () => {
+        const localCore = '/ffmpeg-core/ffmpeg-core.js'
+        try {
+          const res = await fetch(localCore, { method: 'HEAD' })
+          if (res.ok) return localCore
+        } catch (_) { /* fallback */ }
+        return 'https://unpkg.com/@ffmpeg/core@0.12.10/dist/ffmpeg-core.js'
+      }
+      const corePath = await pickCorePath()
       const ffmpeg = createFFmpeg({
-        corePath: 'https://unpkg.com/@ffmpeg/core@0.12.10/dist/ffmpeg-core.js',
+        corePath,
         log: false
       })
       setExportStatus('Loading ffmpeg.wasm…')
