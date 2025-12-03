@@ -1,0 +1,7 @@
+# Paste into WSL to start Beat timeline editing app
+sudo mkdir -p /mnt/d
+sudo mount -t drvfs D: /mnt/d || true
+cd "/mnt/d/coding projects/Beat timeline editing app/web"
+fuser -k 4178/tcp || true
+# first time only: npm install
+npm run dev -- --host --port 4178
