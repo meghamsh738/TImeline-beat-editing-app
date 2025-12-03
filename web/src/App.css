@@ -362,6 +362,8 @@ body {
 .export-box { text-align: left; }
 
 .export-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 10px; }
+.progress { height: 8px; background: rgba(255,255,255,0.08); border-radius: 6px; overflow: hidden; margin-top: 6px; }
+.progress-bar { height: 100%; background: linear-gradient(90deg, #22d3ee, #6366f1); }
 
 .ghost {
   border: 1px solid rgba(255, 255, 255, 0.14);
@@ -374,6 +376,18 @@ body {
 }
 
 .ghost.tiny { padding: 6px 8px; font-size: 12px; }
+.ghost.danger { border-color: #f87171; color: #fecdd3; padding: 6px 8px; }
+.meter { display: inline-block; width: 90px; height: 8px; background: rgba(255,255,255,0.08); border-radius: 6px; overflow: hidden; margin-left: 6px; }
+.meter span { display: block; height: 100%; background: linear-gradient(90deg, #22d3ee, #06b6d4); }
+.keymap-grid { display: grid; grid-template-columns: 1fr; gap: 6px; }
+.keymap-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.key-input { background: #0c121d; border: 1px solid #1f2a3b; color: #e8ecf5; border-radius: 8px; padding: 6px 8px; min-width: 88px; text-align: center; }
+.drafts { display: flex; flex-direction: column; gap: 6px; }
+.draft-inputs { display: flex; gap: 8px; align-items: center; }
+.draft-list { display: flex; flex-direction: column; gap: 4px; max-height: 140px; overflow-y: auto; }
+.draft-row { display: flex; gap: 6px; align-items: center; }
+.draft-row.active button { border-color: #22d3ee; }
+.inspector-cards.stacked { flex-direction: column; align-items: stretch; }
 
 .timeline-wrapper {
   position: relative;
@@ -528,6 +542,9 @@ body {
 .clip:hover { transform: translateY(-2px); box-shadow: 0 12px 24px rgba(0,0,0,0.4); }
 
 .clip.selected { outline: 2px solid #22d3ee; box-shadow: 0 0 0 4px rgba(34, 211, 238, 0.25); }
+.fade-handle { position: absolute; top: 0; bottom: 0; pointer-events: none; background: linear-gradient(90deg, rgba(0,0,0,0.32), rgba(255,255,255,0)); }
+.fade-handle.fade-out { right: 0; left: auto; background: linear-gradient(270deg, rgba(0,0,0,0.32), rgba(255,255,255,0)); }
+.gain-chip { position: absolute; top: 6px; right: 6px; }
 
 .clip::before,
 .clip::after { content: ''; position: absolute; top: 0; width: 8px; height: 100%; }

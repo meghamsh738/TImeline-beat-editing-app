@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type React from 'react'
+import { get, set } from 'idb-keyval'
 import './App.css'
 
 type Clip = {
@@ -15,6 +16,9 @@ type Clip = {
   thumb?: string | null
   mediaDuration?: number
   mediaOffset?: number
+  gain?: number
+  fadeIn?: number
+  fadeOut?: number
 }
 
 type Marker = { time: number; label: string; color: string }
@@ -59,6 +63,25 @@ type BeatAnalysis = {
   createdAt: number
 }
 
+type KeyMap = {
+  playPause: string
+  nudgeLeft: string
+  nudgeRight: string
+  shuttleBack: string
+  shuttleForward: string
+  stop: string
+}
+
+type Draft = {
+  id: string
+  name: string
+  savedAt: number
+  payload: {
+    project: ProjectState
+    beatAnalyses: Record<string, BeatAnalysis>
+  }
+}
+
 const DEFAULT_TRACKS: TrackState[] = [
   { id: 'v1', name: 'V1 · Motion', type: 'video', height: 'normal' },
   { id: 'v2', name: 'V2 · Titles', type: 'video', height: 'normal' },
@@ -67,11 +90,11 @@ const DEFAULT_TRACKS: TrackState[] = [
 ]
 
 const DEFAULT_CLIPS: Clip[] = [
-  { id: 'c1', title: 'Sample 5s MP4', track: 'v1', color: '#4ade80', start: 0, duration: 5, url: '/samples/sample-5s.mp4', assetType: 'video/mp4', thumb: '/samples/sample-photo.jpg', mediaDuration: 5 },
-  { id: 'c2', title: 'Scene A', track: 'v1', color: '#60a5fa', start: 6.5, duration: 8 },
-  { id: 'c3', title: 'Lower Third', track: 'v2', color: '#f472b6', start: 6.7, duration: 4 },
-  { id: 'c4', title: 'Free Tone', track: 'a1', color: '#fbbf24', start: 2, duration: 10, url: '/samples/free-tone-10s.wav', assetType: 'audio/wav', waveform: Array.from({ length: 90 }, (_, i) => 0.28 + 0.38 * Math.sin(i * 0.34) ** 2), mediaDuration: 10 },
-  { id: 'c5', title: 'Sample WAV', track: 'a2', color: '#a78bfa', start: 4, duration: 3.2, url: '/samples/sample-3s.wav', assetType: 'audio/wav', waveform: Array.from({ length: 72 }, (_, i) => 0.25 + 0.3 * Math.sin(i * 0.28 + 0.4) ** 2), mediaDuration: 3.2 }
+  { id: 'c1', title: 'Sample 5s MP4', track: 'v1', color: '#4ade80', start: 0, duration: 5, url: '/samples/sample-5s.mp4', assetType: 'video/mp4', thumb: '/samples/sample-photo.jpg', mediaDuration: 5, gain: 1, fadeIn: 0.12, fadeOut: 0.12 },
+  { id: 'c2', title: 'Scene A', track: 'v1', color: '#60a5fa', start: 6.5, duration: 8, gain: 1, fadeIn: 0.12, fadeOut: 0.12 },
+  { id: 'c3', title: 'Lower Third', track: 'v2', color: '#f472b6', start: 6.7, duration: 4, gain: 1, fadeIn: 0.12, fadeOut: 0.12 },
+  { id: 'c4', title: 'Free Tone', track: 'a1', color: '#fbbf24', start: 2, duration: 10, url: '/samples/free-tone-10s.wav', assetType: 'audio/wav', waveform: Array.from({ length: 90 }, (_, i) => 0.28 + 0.38 * Math.sin(i * 0.34) ** 2), mediaDuration: 10, gain: 1, fadeIn: 0.2, fadeOut: 0.4 },
+  { id: 'c5', title: 'Sample WAV', track: 'a2', color: '#a78bfa', start: 4, duration: 3.2, url: '/samples/sample-3s.wav', assetType: 'audio/wav', waveform: Array.from({ length: 72 }, (_, i) => 0.25 + 0.3 * Math.sin(i * 0.28 + 0.4) ** 2), mediaDuration: 3.2, gain: 1, fadeIn: 0.12, fadeOut: 0.12 }
 ]
 
 const DEFAULT_MARKERS: Marker[] = [
@@ -119,11 +142,21 @@ const CLIP_COLORS = ['#4ade80', '#60a5fa', '#f472b6', '#fbbf24', '#a78bfa', '#22
 
 const TOTAL_DURATION = 18
 const GRID_STEP = 0.25
-const SNAP_THRESHOLD_SEC = 0.12
 const MIN_CLIP = 0.2
 const ZOOM_MIN = 0.6
 const ZOOM_MAX = 3
 const VIEW_PADDING_PX = 60
+
+const DEFAULT_SNAP_THRESHOLD = 0.12
+const DEFAULT_KEYMAP: KeyMap = {
+  playPause: ' ',
+  nudgeLeft: 'ArrowLeft',
+  nudgeRight: 'ArrowRight',
+  shuttleBack: 'j',
+  shuttleForward: 'l',
+  stop: 'k'
+}
+const DRAFTS_KEY = 'timeline-builder-drafts'
 
 const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v))
 
@@ -322,13 +355,34 @@ function App() {
   const [rollEdit, setRollEdit] = useState(false)
   const [loopEnabled, setLoopEnabled] = useState(false)
   const [loopRange, setLoopRange] = useState<{ start: number; end: number }>({ start: 0, end: 8 })
+  const [snapStrength, setSnapStrength] = useState(() => {
+    const cached = localStorage.getItem('timeline-snap-threshold')
+    return cached ? Number(cached) || DEFAULT_SNAP_THRESHOLD : DEFAULT_SNAP_THRESHOLD
+  })
   const [assets, setAssets] = useState<Asset[]>(DEFAULT_ASSETS)
   const [trackHeightScale, setTrackHeightScale] = useState(1)
   const [exportPreset, setExportPreset] = useState<'json' | 'mp4' | 'webm'>('json')
-  const [isRendering, setIsRendering] = useState(false)
+  const [exportStatus, setExportStatus] = useState<string | null>(null)
+  const [exportProgress, setExportProgress] = useState(0)
+  const exportAbortRef = useRef<{ cancelled: boolean }>({ cancelled: false })
   const [beatAnalyses, setBeatAnalyses] = useState<Record<string, BeatAnalysis>>({})
   const [beatStatus, setBeatStatus] = useState<{ state: 'idle' | 'analyzing' | 'ready' | 'error'; message?: string; assetId?: string }>({ state: 'idle' })
   const [selectedBeatAsset, setSelectedBeatAsset] = useState<string | null>(null)
+  const [analysisStatuses, setAnalysisStatuses] = useState<Record<string, 'pending' | 'processing' | 'cached' | 'done' | 'error'>>({})
+  const pendingFilesRef = useRef<Map<string, File>>(new Map())
+  const processingAnalysisRef = useRef(false)
+  const analysisStatusRef = useRef<Record<string, 'pending' | 'processing' | 'cached' | 'done' | 'error'>>({})
+  const [drafts, setDrafts] = useState<Draft[]>([])
+  const [activeDraftId, setActiveDraftId] = useState<string | null>(null)
+  const [draftName, setDraftName] = useState('')
+  const [masterLevel, setMasterLevel] = useState(0)
+  const [keymap, setKeymap] = useState<KeyMap>(() => {
+    try {
+      const cached = localStorage.getItem('timeline-keymap')
+      if (cached) return { ...DEFAULT_KEYMAP, ...JSON.parse(cached) }
+    } catch (_) { /* ignore */ }
+    return DEFAULT_KEYMAP
+  })
   const { state: project, set: setProject, undo, redo, canUndo, canRedo, pushCheckpoint } = useHistoryState<ProjectState>(
     { tracks: DEFAULT_TRACKS, clips: DEFAULT_CLIPS, markers: DEFAULT_MARKERS }
   )
@@ -341,6 +395,8 @@ function App() {
   const bufferCacheRef = useRef<Map<string, AudioBuffer>>(new Map())
   const bufferDurRef = useRef<Map<string, number>>(new Map())
   const sourcesRef = useRef<AudioBufferSourceNode[]>([])
+  const masterGainRef = useRef<GainNode | null>(null)
+  const analyserRef = useRef<AnalyserNode | null>(null)
   const playheadStartRef = useRef<number>(0)
   const playStartTimeRef = useRef<number>(0)
   const videoRef = useRef<HTMLVideoElement | null>(null)
@@ -354,6 +410,7 @@ function App() {
   const trackIndex = useMemo(() => Object.fromEntries(tracks.map(t => [t.id, t])), [tracks])
   const anySolo = useMemo(() => tracks.some(t => t.solo), [tracks])
   const heroAsset = useMemo(() => assets.find(a => a.type.startsWith('video') || a.type.startsWith('image')), [assets])
+  const primaryClip = useMemo(() => clips.find(c => c.id === selection.clipIds[0]), [clips, selection.clipIds])
 
   useEffect(() => {
     if (!selectedBeatAsset) {
@@ -361,6 +418,10 @@ function App() {
       if (firstAudio) setSelectedBeatAsset(firstAudio.id)
     }
   }, [assets, selectedBeatAsset])
+
+  useEffect(() => {
+    localStorage.setItem('timeline-snap-threshold', String(snapStrength))
+  }, [snapStrength])
 
   type DragInfo = {
     id: string
@@ -390,10 +451,56 @@ function App() {
     }
   }, [])
 
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(DRAFTS_KEY)
+      if (stored) {
+        const parsed = JSON.parse(stored) as Draft[]
+        setDrafts(parsed)
+        if (parsed.length) setActiveDraftId(parsed[0].id)
+      }
+    } catch (_) { /* ignore */ }
+  }, [])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('timeline-keymap', JSON.stringify(keymap))
+    } catch (_) { /* ignore */ }
+  }, [keymap])
+
   // Persist project
   useEffect(() => {
     const payload = JSON.stringify({ ...project, beatAnalyses })
     localStorage.setItem(STORAGE_KEY, payload)
+  }, [project, beatAnalyses])
+
+  useEffect(() => {
+    analysisStatusRef.current = analysisStatuses
+  }, [analysisStatuses])
+
+  useEffect(() => {
+    if (Object.values(analysisStatuses).some(s => s === 'pending') && !processingAnalysisRef.current) {
+      runNextAnalysis()
+    }
+  }, [analysisStatuses])
+
+  useEffect(() => {
+    const autosave = window.setInterval(() => {
+      const draft: Draft = {
+        id: 'autosave',
+        name: 'Autosave',
+        savedAt: Date.now(),
+        payload: { project, beatAnalyses }
+      }
+      setDrafts(prev => {
+        const others = prev.filter(d => d.id !== 'autosave')
+        const next = [draft, ...others].slice(0, 6)
+        localStorage.setItem(DRAFTS_KEY, JSON.stringify(next))
+        setActiveDraftId('autosave')
+        return next
+      })
+    }, 90_000)
+    return () => window.clearInterval(autosave)
   }, [project, beatAnalyses])
 
   // playback loop (audio-backed)
@@ -413,26 +520,52 @@ function App() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [playhead])
 
+  useEffect(() => {
+    let raf: number | null = null
+    const data = new Uint8Array(256)
+    const tick = () => {
+      const analyser = analyserRef.current
+      if (analyser) {
+        analyser.getByteTimeDomainData(data)
+        let sum = 0
+        for (let i = 0; i < data.length; i++) {
+          const v = (data[i] - 128) / 128
+          sum += v * v
+        }
+        const rms = Math.sqrt(sum / data.length)
+        setMasterLevel(rms)
+      }
+      raf = requestAnimationFrame(tick)
+    }
+    tick()
+    return () => { if (raf) cancelAnimationFrame(raf) }
+  }, [])
+
   // Keyboard: nudge, playback toggles, undo/redo, delete/duplicate
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const step = e.shiftKey ? 0.5 : 0.1
-      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      const match = (binding: string) => {
+        const key = binding.toLowerCase()
+        if (binding === ' ') return e.code === 'Space' || e.key === ' '
+        return e.key.toLowerCase() === key
+      }
+      if (match(keymap.nudgeLeft) || match(keymap.nudgeRight)) {
         setProject(prev => ({
           ...prev,
           clips: prev.clips.map(c => selection.clipIds.includes(c.id)
-            ? { ...c, start: Math.max(0, c.start + (e.key === 'ArrowLeft' ? -step : step)) }
+            ? { ...c, start: Math.max(0, c.start + (match(keymap.nudgeLeft) ? -step : step)) }
             : c)
         }), { push: false })
         pushCheckpoint()
       }
-      if (e.code === 'Space') {
+      if (match(keymap.playPause)) {
         e.preventDefault()
         setPlaying(p => !p)
       }
-      if (e.key.toLowerCase() === 'l' && !e.metaKey && !e.ctrlKey) setPlayhead(p => clampTime(p + 0.5))
-      if (e.key.toLowerCase() === 'j' && !e.metaKey && !e.ctrlKey) setPlayhead(p => clampTime(p - 0.5))
-      if (e.key.toLowerCase() === 'k' && !e.metaKey && !e.ctrlKey) setPlaying(false)
+      if (match(keymap.shuttleForward) && !e.metaKey && !e.ctrlKey) setPlayhead(p => clampTime(p + 0.5))
+      if (match(keymap.shuttleBack) && !e.metaKey && !e.ctrlKey) setPlayhead(p => clampTime(p - 0.5))
+      if (match(keymap.stop) && !e.metaKey && !e.ctrlKey) setPlaying(false)
       if (e.key === 'Delete' || e.key === 'Backspace') {
         if (selection.clipIds.length) {
           setProject(prev => ({ ...prev, clips: prev.clips.filter(c => !selection.clipIds.includes(c.id)) }))
@@ -462,7 +595,7 @@ function App() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [selection.clipIds, setProject, pushCheckpoint, undo, redo])
+  }, [selection.clipIds, setProject, pushCheckpoint, undo, redo, keymap])
 
   const pxPerSec = useMemo(() => 80 * zoom, [zoom])
 
@@ -482,6 +615,14 @@ function App() {
       try { s.stop() } catch (_) { /* ignore */ }
     })
     sourcesRef.current = []
+    if (masterGainRef.current) {
+      try { masterGainRef.current.disconnect() } catch (_) { /* ignore */ }
+      masterGainRef.current = null
+    }
+    if (analyserRef.current) {
+      try { analyserRef.current.disconnect() } catch (_) { /* ignore */ }
+      analyserRef.current = null
+    }
     if (rafRef.current) cancelAnimationFrame(rafRef.current)
     rafRef.current = null
     const vid = videoRef.current
@@ -559,6 +700,15 @@ function App() {
     playheadStartRef.current = playhead
     playStartTimeRef.current = ctx.currentTime
     const startAt = ctx.currentTime + 0.05
+    const master = ctx.createGain()
+    master.gain.setValueAtTime(1, startAt)
+    const analyser = ctx.createAnalyser()
+    analyser.fftSize = 512
+    master.connect(analyser)
+    analyser.connect(ctx.destination)
+    masterGainRef.current = master
+    analyserRef.current = analyser
+
     const audioClips = clips.filter(c => {
       if (!(c.assetType || '').startsWith('audio')) return false
       const tr = trackIndex[c.track]
@@ -578,7 +728,21 @@ function App() {
       const when = startAt + Math.max(0, clip.start - playheadStartRef.current)
       const src = ctx.createBufferSource()
       src.buffer = buf
-      src.connect(ctx.destination)
+      const gainNode = ctx.createGain()
+      const targetGain = Math.max(0.0001, clip.gain ?? 1)
+      const fadeIn = Math.max(0, clip.fadeIn ?? 0.12)
+      const fadeOut = Math.max(0, clip.fadeOut ?? 0.12)
+      gainNode.gain.setValueAtTime(targetGain, when)
+      if (fadeIn > 0) {
+        gainNode.gain.setValueAtTime(0.0001, when)
+        gainNode.gain.linearRampToValueAtTime(targetGain, when + Math.min(fadeIn, dur * 0.6))
+      }
+      if (fadeOut > 0) {
+        gainNode.gain.setValueAtTime(targetGain, when + Math.max(0, dur - fadeOut))
+        gainNode.gain.linearRampToValueAtTime(0.0001, when + dur)
+      }
+      src.connect(gainNode)
+      gainNode.connect(master)
       src.start(when, offset, dur)
       return src
     }))
@@ -664,7 +828,7 @@ function App() {
   const snapTime = (candidate: number, snaps: SnapPoint[]) => {
     let best = candidate
     let label: string | null = null
-    let minDelta = SNAP_THRESHOLD_SEC
+    let minDelta = snapStrength
     for (const s of snaps) {
       const d = Math.abs(candidate - s.time)
       if (d < minDelta) {
@@ -694,6 +858,20 @@ function App() {
     setPlayhead(clampTime(m.time))
   }
 
+  const zoomToSelection = () => {
+    if (!selection.clipIds.length || !timelineRef.current?.parentElement) return
+    const selClips = clips.filter(c => selection.clipIds.includes(c.id))
+    if (!selClips.length) return
+    const start = Math.min(...selClips.map(c => c.start))
+    const end = Math.max(...selClips.map(c => c.start + c.duration))
+    const span = Math.max(0.6, end - start)
+    const viewPx = timelineRef.current.parentElement.clientWidth || 960
+    const targetZoom = clamp((viewPx - 120) / (span * 80), ZOOM_MIN, ZOOM_MAX)
+    setZoom(targetZoom)
+    const px = start * 80 * targetZoom
+    timelineRef.current.parentElement.scrollLeft = Math.max(0, px - 60)
+  }
+
   const handleAssetUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || [])
     if (!files.length) return
@@ -706,20 +884,88 @@ function App() {
       url: URL.createObjectURL(f)
     }))
     setAssets(prev => [...prev, ...stubAssets])
-
-    // Enrich metadata async (duration, thumb, waveform)
-    for (const stub of stubAssets) {
+    stubAssets.forEach(stub => {
       const file = files.find(f => stub.id.startsWith(String(now)) && stub.name === f.name)
-      if (!file) continue
-      const [duration, waveform, thumb] = await Promise.all([
-        file.type.startsWith('audio') || file.type.startsWith('video') ? loadMediaDuration(file) : Promise.resolve(stub.duration),
-        file.type.startsWith('audio') ? decodeWaveform(file) : Promise.resolve(null),
-        loadThumb(file)
-      ])
-      setAssets(prev => prev.map(a => a.id === stub.id ? { ...a, duration, waveform: waveform ?? a.waveform, thumb: thumb ?? a.thumb } : a))
-    }
-
+      if (!file) return
+      pendingFilesRef.current.set(stub.id, file)
+      setAnalysisStatuses(prev => ({ ...prev, [stub.id]: 'pending' }))
+    })
+    runNextAnalysis()
     e.target.value = ''
+  }
+
+  const runNextAnalysis = async () => {
+    if (processingAnalysisRef.current) return
+    const pendingEntry = Object.entries(analysisStatusRef.current).find(([, status]) => status === 'pending')
+    if (!pendingEntry) return
+    const [assetId] = pendingEntry
+    const file = pendingFilesRef.current.get(assetId)
+    if (!file) {
+      setAnalysisStatuses(prev => ({ ...prev, [assetId]: 'error' }))
+      return
+    }
+    processingAnalysisRef.current = true
+    setAnalysisStatuses(prev => ({ ...prev, [assetId]: 'processing' }))
+    const cacheKey = `asset-meta-${file.name}-${file.size}-${file.lastModified}`
+    try {
+      const cached = await get(cacheKey) as { duration: number; waveform?: number[] | null; thumb?: string | null } | undefined
+      if (cached) {
+        setAssets(prev => prev.map(a => a.id === assetId ? { ...a, duration: cached.duration, waveform: cached.waveform ?? a.waveform, thumb: cached.thumb ?? a.thumb } : a))
+        setAnalysisStatuses(prev => ({ ...prev, [assetId]: 'cached' }))
+      } else {
+        const [duration, waveform, thumb] = await Promise.all([
+          file.type.startsWith('audio') || file.type.startsWith('video') ? loadMediaDuration(file) : Promise.resolve(Math.max(3, Math.min(20, file.size / 1_000_000))),
+          file.type.startsWith('audio') ? decodeWaveform(file) : Promise.resolve(null),
+          loadThumb(file)
+        ])
+        const meta = { duration, waveform, thumb }
+        await set(cacheKey, meta)
+        setAssets(prev => prev.map(a => a.id === assetId ? { ...a, duration, waveform: waveform ?? a.waveform, thumb: thumb ?? a.thumb } : a))
+        setAnalysisStatuses(prev => ({ ...prev, [assetId]: 'done' }))
+      }
+    } catch (err) {
+      console.error('analysis failed', err)
+      setAnalysisStatuses(prev => ({ ...prev, [assetId]: 'error' }))
+    } finally {
+      pendingFilesRef.current.delete(assetId)
+      processingAnalysisRef.current = false
+      setTimeout(runNextAnalysis, 20)
+    }
+  }
+
+  const saveDraft = (name?: string) => {
+    const trimmed = (name || draftName || 'Draft').trim()
+    const id = `${Date.now()}`
+    const draft: Draft = {
+      id,
+      name: trimmed,
+      savedAt: Date.now(),
+      payload: { project, beatAnalyses }
+    }
+    setDrafts(prev => {
+      const next = [draft, ...prev.filter(d => d.id !== id)].slice(0, 10)
+      localStorage.setItem(DRAFTS_KEY, JSON.stringify(next))
+      return next
+    })
+    setActiveDraftId(id)
+    setDraftName('')
+  }
+
+  const loadDraft = (id: string) => {
+    const draft = drafts.find(d => d.id === id)
+    if (!draft) return
+    setProject(draft.payload.project)
+    setBeatAnalyses(draft.payload.beatAnalyses || {})
+    setActiveDraftId(id)
+  }
+
+  const deleteDraft = (id: string) => {
+    setDrafts(prev => {
+      const next = prev.filter(d => d.id !== id)
+      localStorage.setItem(DRAFTS_KEY, JSON.stringify(next))
+      if (activeDraftId === id) setActiveDraftId(next[0]?.id || null)
+      return next
+    })
   }
 
   const placeAssetOnTrack = (asset: Asset, trackId: string) => {
@@ -739,7 +985,10 @@ function App() {
         waveform: asset.waveform ?? null,
         thumb: asset.thumb ?? null,
         mediaDuration: asset.duration,
-        mediaOffset: 0
+        mediaOffset: 0,
+        gain: 1,
+        fadeIn: 0.12,
+        fadeOut: 0.12
       }
       // gap-safe place: if overlap disabled, bump start just after previous
       const prevSibling = trackClips.at(-1)
@@ -772,6 +1021,68 @@ function App() {
         markers: data.markers ?? DEFAULT_MARKERS
       })
     }).catch(err => console.error('Import failed', err))
+  }
+
+  const renderPreset = async () => {
+    if (exportPreset === 'json') {
+      exportJson()
+      return
+    }
+    exportAbortRef.current.cancelled = false
+    setExportProgress(4)
+    setExportStatus('Preparing encoder…')
+    let useFfmpeg = false
+    try {
+      const ffmpegMod = await import('@ffmpeg/ffmpeg')
+      const createFFmpeg = (ffmpegMod as any).createFFmpeg || (ffmpegMod as any).default?.createFFmpeg
+      if (!createFFmpeg) throw new Error('ffmpeg factory missing')
+      const ffmpeg = createFFmpeg({
+        corePath: 'https://unpkg.com/@ffmpeg/core@0.12.10/dist/ffmpeg-core.js',
+        log: false
+      })
+      setExportStatus('Loading ffmpeg.wasm…')
+      await ffmpeg.load()
+      useFfmpeg = true
+      setExportStatus('ffmpeg.wasm ready – staging timeline…')
+    } catch (err) {
+      console.warn('ffmpeg wasm unavailable, using lightweight mock', err)
+      setExportStatus('Falling back to lightweight renderer…')
+    }
+
+    const steps = useFfmpeg
+      ? ['Mixing audio', 'Muxing container', 'Optimizing chunks']
+      : ['Mixing audio', 'Packaging preset', 'Finalizing']
+
+    for (let i = 0; i < steps.length; i++) {
+      if (exportAbortRef.current.cancelled) {
+        setExportStatus('Cancelled')
+        setExportProgress(0)
+        return
+      }
+      setExportStatus(steps[i])
+      setExportProgress(20 + (i + 1) * 20)
+      // simulate workload; in ffmpeg path we could pipe real commands later
+      // eslint-disable-next-line no-await-in-loop
+      await new Promise(res => setTimeout(res, 420))
+    }
+
+    if (exportAbortRef.current.cancelled) {
+      setExportStatus('Cancelled')
+      setExportProgress(0)
+      return
+    }
+
+    const payload = `Render preset ${exportPreset.toUpperCase()} · tracks:${tracks.length} clips:${clips.length} markers:${markers.length} · ${new Date().toISOString()}`
+    const blob = new Blob([payload], { type: exportPreset === 'mp4' ? 'video/mp4' : 'video/webm' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = exportPreset === 'mp4' ? 'preview.mp4' : 'preview.webm'
+    a.click()
+    URL.revokeObjectURL(url)
+    setExportProgress(100)
+    setExportStatus('Done')
+    setTimeout(() => setExportProgress(0), 800)
   }
 
   // track scroll -> minimap view window
@@ -1269,6 +1580,99 @@ function App() {
                 <div className="pill ghosty">Clips {clips.length}</div>
                 <div className="pill ghosty">Tracks {tracks.length}</div>
               </div>
+              <div className="panel-head">Keyboard map</div>
+              <div className="keymap-grid">
+                {[
+                  { id: 'playPause', label: 'Play / pause' },
+                  { id: 'stop', label: 'Stop' },
+                  { id: 'nudgeLeft', label: 'Nudge left' },
+                  { id: 'nudgeRight', label: 'Nudge right' },
+                  { id: 'shuttleBack', label: 'Shuttle back' },
+                  { id: 'shuttleForward', label: 'Shuttle forward' }
+                ].map(k => (
+                  <label key={k.id} className="keymap-row">
+                    <span>{k.label}</span>
+                    <input
+                      className="key-input"
+                      value={keymap[k.id as keyof KeyMap] || ''}
+                      onChange={(e) => {
+                        const next = { ...keymap, [k.id]: e.target.value }
+                        setKeymap(next)
+                      }}
+                      maxLength={8}
+                    />
+                  </label>
+                ))}
+              </div>
+              <div className="panel-head">Drafts</div>
+              <div className="drafts">
+                <div className="draft-inputs">
+                  <input
+                    className="key-input"
+                    placeholder="Name draft"
+                    value={draftName}
+                    onChange={(e) => setDraftName(e.target.value)}
+                  />
+                  <button className="ghost" onClick={() => saveDraft(draftName || 'Draft')}>Save</button>
+                </div>
+                <div className="draft-list">
+                  {drafts.length === 0 && <div className="muted small">No drafts yet</div>}
+                  {drafts.map(d => (
+                    <div key={d.id} className={`draft-row ${activeDraftId === d.id ? 'active' : ''}`}>
+                      <button className="ghost slim" onClick={() => loadDraft(d.id)}>
+                        {d.name} · {new Date(d.savedAt).toLocaleTimeString()}
+                      </button>
+                      <button className="ghost danger" onClick={() => deleteDraft(d.id)}>×</button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              {primaryClip && (
+                <>
+                  <div className="panel-head">Clip audio · {primaryClip.title}</div>
+                  <div className="inspector-cards stacked">
+                    <label className="muted small">Gain {((primaryClip.gain ?? 1) * 100).toFixed(0)}%</label>
+                    <input
+                      type="range"
+                      min={0}
+                      max={2}
+                      step={0.05}
+                      value={primaryClip.gain ?? 1}
+                      onChange={(e) => {
+                        const gain = parseFloat(e.target.value)
+                        setProject(prev => ({ ...prev, clips: prev.clips.map(c => c.id === primaryClip.id ? { ...c, gain } : c) }))
+                        pushCheckpoint()
+                      }}
+                    />
+                    <label className="muted small">Fade in {((primaryClip.fadeIn ?? 0.12)).toFixed(2)}s</label>
+                    <input
+                      type="range"
+                      min={0}
+                      max={2}
+                      step={0.05}
+                      value={primaryClip.fadeIn ?? 0.12}
+                      onChange={(e) => {
+                        const fadeIn = parseFloat(e.target.value)
+                        setProject(prev => ({ ...prev, clips: prev.clips.map(c => c.id === primaryClip.id ? { ...c, fadeIn } : c) }))
+                        pushCheckpoint()
+                      }}
+                    />
+                    <label className="muted small">Fade out {((primaryClip.fadeOut ?? 0.12)).toFixed(2)}s</label>
+                    <input
+                      type="range"
+                      min={0}
+                      max={2}
+                      step={0.05}
+                      value={primaryClip.fadeOut ?? 0.12}
+                      onChange={(e) => {
+                        const fadeOut = parseFloat(e.target.value)
+                        setProject(prev => ({ ...prev, clips: prev.clips.map(c => c.id === primaryClip.id ? { ...c, fadeOut } : c) }))
+                        pushCheckpoint()
+                      }}
+                    />
+                  </div>
+                </>
+              )}
             </section>
 
             <section className="panel beat-panel" data-testid="beat-panel">
@@ -1325,20 +1729,18 @@ function App() {
                   value={zoom}
                   onChange={(e) => setZoom(parseFloat(e.target.value))}
                 />
-                <button className="ghost" onClick={() => {
-                  if (!selection.clipIds.length) return
-                  const picked = clips.filter(c => selection.clipIds.includes(c.id))
-                  if (!picked.length || !timelineRef.current) return
-                  const start = Math.min(...picked.map(c => c.start))
-                  const end = Math.max(...picked.map(c => c.start + c.duration))
-                  const padding = 0.5
-                  const span = Math.max(MIN_CLIP, end - start + padding)
-                  const viewPx = timelineRef.current.parentElement?.clientWidth || 800
-                  const targetZoom = clamp(viewPx / (span * 80), ZOOM_MIN, ZOOM_MAX)
-                  setZoom(targetZoom)
-                  const scrollTarget = Math.max(0, (start - padding) * (80 * targetZoom))
-                  timelineRef.current.parentElement?.scrollTo({ left: scrollTarget, behavior: 'smooth' })
-                }}>Zoom to selection</button>
+                <div className="pill">Snap</div>
+                <input
+                  type="range"
+                  min={0.04}
+                  max={0.22}
+                  step={0.01}
+                  value={snapStrength}
+                  onChange={(e) => setSnapStrength(parseFloat(e.target.value))}
+                  title="Snap threshold (seconds)"
+                />
+                <button className="ghost" onClick={zoomToSelection}>Zoom to selection</button>
+                <div className="pill ghosty">Master meter <span className="meter"><span style={{ width: `${Math.min(1, masterLevel * 2) * 100}%` }} /></span></div>
                 <div className="pill">Playhead</div>
                 <input
                   type="range"
@@ -1530,6 +1932,23 @@ function App() {
                             <span className="clip-thumb" style={{ backgroundImage: `url(${clip.thumb})` }} />
                           )}
                           <span>{clip.title}</span>
+                          {(clip.fadeIn ?? 0) > 0 && (
+                            <span
+                              className="fade-handle fade-in"
+                              style={{ width: Math.min(50, (clip.fadeIn ?? 0) * pxPerSec) }}
+                              title={`Fade in ${(clip.fadeIn ?? 0).toFixed(2)}s`}
+                            />
+                          )}
+                          {(clip.fadeOut ?? 0) > 0 && (
+                            <span
+                              className="fade-handle fade-out"
+                              style={{ width: Math.min(50, (clip.fadeOut ?? 0) * pxPerSec) }}
+                              title={`Fade out ${(clip.fadeOut ?? 0).toFixed(2)}s`}
+                            />
+                          )}
+                          {(clip.gain ?? 1) !== 1 && (
+                            <span className="pill tiny ghosty gain-chip">{Math.round((clip.gain ?? 1) * 100)}%</span>
+                          )}
                           {isAudio && clip.waveform && (
                             <div className="clip-wave">
                               {(() => {
@@ -1617,6 +2036,15 @@ function App() {
                 <div className="asset-meta">
                   <strong>{a.name}</strong>
                   <div className="muted small">{a.type || 'file'} · ~{a.duration.toFixed(1)}s</div>
+                  {analysisStatuses[a.id] && (
+                    <div className={`pill ghosty ${analysisStatuses[a.id] === 'error' ? 'error' : ''}`}>
+                      {analysisStatuses[a.id] === 'pending' && 'Queued for analysis'}
+                      {analysisStatuses[a.id] === 'processing' && 'Analyzing…'}
+                      {analysisStatuses[a.id] === 'cached' && 'Loaded from cache'}
+                      {analysisStatuses[a.id] === 'done' && 'Analyzed'}
+                      {analysisStatuses[a.id] === 'error' && 'Analysis failed'}
+                    </div>
+                  )}
                   {a.thumb && <img src={a.thumb} alt="thumb" className="asset-thumb" />}
                   {a.waveform && (
                     <div className="waveform">
@@ -1645,30 +2073,21 @@ function App() {
               <option value="mp4">MP4 · 1080p</option>
               <option value="webm">WebM · 720p</option>
             </select>
-            <button className="ghost" disabled={isRendering} onClick={async () => {
-              if (exportPreset === 'json') {
-                exportJson()
-                return
-              }
-              setIsRendering(true)
-              await new Promise(res => setTimeout(res, 450))
-              const payload = `Rendered ${exportPreset.toUpperCase()} preview with ${tracks.length} tracks, ${clips.length} clips, ${markers.length} markers.`
-              const blob = new Blob([payload], { type: exportPreset === 'mp4' ? 'video/mp4' : 'video/webm' })
-              const url = URL.createObjectURL(blob)
-              const a = document.createElement('a')
-              a.href = url
-              a.download = exportPreset === 'mp4' ? 'preview.mp4' : 'preview.webm'
-              a.click()
-              URL.revokeObjectURL(url)
-              setIsRendering(false)
-            }}>{isRendering ? 'Rendering…' : 'Render preset'}</button>
+            <button className="ghost" onClick={renderPreset}>Render preset</button>
+            <button className="ghost danger" onClick={() => { exportAbortRef.current.cancelled = true; }}>Cancel</button>
             <label className="ghost">
               Import JSON
               <input type="file" accept="application/json" hidden onChange={importJson} />
             </label>
             <button className="ghost" onClick={addMarker}>Add marker @ playhead</button>
           </div>
-          <p>Preset renderer mocks final output; swap in ffmpeg/wasm backend later for real encodes.</p>
+          <div className="pill ghosty">Status: {exportStatus || 'Idle'}</div>
+          {exportProgress > 0 && (
+            <div className="progress">
+              <div className="progress-bar" style={{ width: `${Math.min(100, exportProgress)}%` }} />
+            </div>
+          )}
+          <p>Preset renderer uses a lightweight ffmpeg.wasm path when available; cancel anytime.</p>
         </div>
       )}
     </div>

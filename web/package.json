@@ -8,9 +8,12 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:e2e:headless": "PW_SKIP_VIDEO=1 PW_HEADLESS=1 playwright test tests/headless-smoke.spec.ts"
   },
   "dependencies": {
+    "@ffmpeg/ffmpeg": "^0.12.10",
+    "idb-keyval": "^6.2.1",
     "react": "^19.1.0",
     "react-dom": "^19.1.0"
   },
